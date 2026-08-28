@@ -23,7 +23,7 @@ This release contains the following crate updates:
 
   * The `FromForm` derive now properly records errors involving entire forms.
 
-  * `FromForm` derive can now be used in code emitted by `macro_rules!` macros.
+  * `FromForm` derive can now by used in code emitted by `macro_rules!` macros.
 
   * **(fix [#2668] via [52de9a])** [`TempFile`] now ensures it flushes before
     being persisted.

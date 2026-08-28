@@ -1,4 +1,5 @@
 use std::io;
+use std::pin::Pin;
 
 use rocket::data::{IoHandler, IoStream};
 use rocket::futures::{self, StreamExt, SinkExt, future::BoxFuture, stream::SplitStream};
@@ -36,6 +37,10 @@ pub struct WebSocket {
 }
 
 impl WebSocket {
+    fn new(key: String) -> WebSocket {
+        WebSocket { config: Config::default(), key }
+    }
+
     /// Change the default connection configuration to `config`.
     ///
     /// # Example
@@ -109,8 +114,8 @@ impl WebSocket {
     ///     }))
     /// }
     /// ```
-    pub fn channel<'r, F>(self, handler: F) -> Channel<'r>
-        where F: FnOnce(DuplexStream) -> BoxFuture<'r, Result<()>> + Send + 'r
+    pub fn channel<'r, F: Send + 'r>(self, handler: F) -> Channel<'r>
+        where F: FnOnce(DuplexStream) -> BoxFuture<'r, Result<()>> + 'r
     {
         Channel { ws: self, handler: Box::new(handler), }
     }
@@ -229,9 +234,7 @@ impl<'r> FromRequest<'r> for WebSocket {
         let is_13 = headers.get_one("Sec-WebSocket-Version").map_or(false, |v| v == "13");
         let key = headers.get_one("Sec-WebSocket-Key").map(|k| derive_accept_key(k.as_bytes()));
         match key {
-            Some(key) if is_upgrade && is_ws && is_13 => {
-                Outcome::Success(WebSocket { key, config: Config::default() })
-            },
+            Some(key) if is_upgrade && is_ws && is_13 => Outcome::Success(WebSocket::new(key)),
             Some(_) | None => Outcome::Forward(Status::BadRequest)
         }
     }
@@ -261,9 +264,9 @@ impl<'r, 'o: 'r, S> Responder<'r, 'o> for MessageStream<'o, S>
 
 #[rocket::async_trait]
 impl IoHandler for Channel<'_> {
-    async fn io(self: Box<Self>, io: IoStream) -> io::Result<()> {
-        let stream = DuplexStream::new(io, self.ws.config).await;
-        let result = (self.handler)(stream).await;
+    async fn io(self: Pin<Box<Self>>, io: IoStream) -> io::Result<()> {
+        let channel = Pin::into_inner(self);
+        let result = (channel.handler)(DuplexStream::new(io, channel.ws.config).await).await;
         handle_result(result).map(|_| ())
     }
 }
@@ -272,13 +275,12 @@ impl IoHandler for Channel<'_> {
 impl<'r, S> IoHandler for MessageStream<'r, S>
     where S: futures::Stream<Item = Result<Message>> + Send + 'r
 {
-    async fn io(self: Box<Self>, io: IoStream) -> io::Result<()> {
+    async fn io(self: Pin<Box<Self>>, io: IoStream) -> io::Result<()> {
         let (mut sink, source) = DuplexStream::new(io, self.ws.config).await.split();
-        let stream = (self.handler)(source);
+        let stream = (Pin::into_inner(self).handler)(source);
         rocket::tokio::pin!(stream);
         while let Some(msg) = stream.next().await {
             let result = match msg {
-                Ok(msg) if msg.is_close() => return Ok(()),
                 Ok(msg) => sink.send(msg).await,
                 Err(e) => Err(e)
             };

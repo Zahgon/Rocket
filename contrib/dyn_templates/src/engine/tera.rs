@@ -21,13 +21,13 @@ impl Engine for Tera {
 
         // Finally try to tell Tera about all of the templates.
         if let Err(e) = tera.add_template_files(files) {
-            span_error!("templating", "Tera templating initialization failed" => {
-                let mut error = Some(&e as &dyn Error);
-                while let Some(err) = error {
-                    error!("{err}");
-                    error = err.source();
-                }
-            });
+            error!("Failed to initialize Tera templating.");
+
+            let mut error = Some(&e as &dyn Error);
+            while let Some(err) = error {
+                info_!("{}", err);
+                error = err.source();
+            }
 
             None
         } else {
@@ -35,26 +35,25 @@ impl Engine for Tera {
         }
     }
 
-    fn render<C: Serialize>(&self, template: &str, context: C) -> Option<String> {
-        if self.get_template(template).is_err() {
-            error!(template, "requested template does not exist");
+    fn render<C: Serialize>(&self, name: &str, context: C) -> Option<String> {
+        if self.get_template(name).is_err() {
+            error_!("Tera template '{}' does not exist.", name);
             return None;
         };
 
         let tera_ctx = Context::from_serialize(context)
-            .map_err(|e| error!("Tera context error: {}.", e))
+            .map_err(|e| error_!("Tera context error: {}.", e))
             .ok()?;
 
-        match Tera::render(self, template, &tera_ctx) {
+        match Tera::render(self, name, &tera_ctx) {
             Ok(string) => Some(string),
             Err(e) => {
-                span_error!("templating", template, "failed to render Tera template" => {
-                    let mut error = Some(&e as &dyn Error);
-                    while let Some(err) = error {
-                        error!("{err}");
-                        error = err.source();
-                    }
-                });
+                error_!("Error rendering Tera template '{name}': {e}");
+                let mut error = Some(&e as &dyn Error);
+                while let Some(err) = error {
+                    error_!("{}", err);
+                    error = err.source();
+                }
 
                 None
             }

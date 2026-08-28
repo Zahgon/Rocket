@@ -24,9 +24,9 @@ use crate::uri::{Authority, Path, Query, Data, Error, as_utf8_unchecked, fmt};
 /// Rocket prefers _normalized_ absolute URIs, an absolute URI with the
 /// following properties:
 ///
-///   * If there is an authority, the path is empty or absolute.
-///   * The path and query, if any, are normalized with no empty segments except
-///     optionally for one trailing slash.
+///   * The path and query, if any, are normalized with no empty segments.
+///   * If there is an authority, the path is empty or absolute with more than
+///     one character.
 ///
 /// The [`Absolute::is_normalized()`] method checks for normalization while
 /// [`Absolute::into_normalized()`] normalizes any absolute URI.
@@ -38,13 +38,8 @@ use crate::uri::{Authority, Path, Query, Data, Error, as_utf8_unchecked, fmt};
 /// # use rocket::http::uri::Absolute;
 /// # let valid_uris = [
 /// "http://rocket.rs",
-/// "http://rocket.rs/",
-/// "ftp:/a/b/",
-/// "ftp:/a/b/?",
 /// "scheme:/foo/bar",
-/// "scheme:/foo/bar/",
-/// "scheme:/foo/bar/?",
-/// "scheme:/foo/bar/?abc",
+/// "scheme:/foo/bar?abc",
 /// # ];
 /// # for uri in &valid_uris {
 /// #     let uri = Absolute::parse(uri).unwrap();
@@ -58,9 +53,11 @@ use crate::uri::{Authority, Path, Query, Data, Error, as_utf8_unchecked, fmt};
 /// # extern crate rocket;
 /// # use rocket::http::uri::Absolute;
 /// # let invalid = [
+/// "http://rocket.rs/",    // trailing '/'
+/// "ftp:/a/b/",            // trailing empty segment
 /// "ftp:/a//c//d",         // two empty segments
+/// "ftp:/a/b/?",           // empty path segment
 /// "ftp:/?foo&",           // trailing empty query segment
-/// "ftp:/?fooa&&b",        // empty query segment
 /// # ];
 /// # for uri in &invalid {
 /// #   assert!(!Absolute::parse(uri).unwrap().is_normalized());
@@ -72,19 +69,19 @@ use crate::uri::{Authority, Path, Query, Data, Error, as_utf8_unchecked, fmt};
 /// `Absolute` is both `Serialize` and `Deserialize`:
 ///
 /// ```rust
-/// # #[cfg(feature = "serde")] mod serde_impl {
-/// # use serde as serde;
+/// # #[cfg(feature = "serde")] mod serde {
+/// # use serde_ as serde;
 /// use serde::{Serialize, Deserialize};
 /// use rocket::http::uri::Absolute;
 ///
 /// #[derive(Deserialize, Serialize)]
-/// # #[serde(crate = "serde")]
+/// # #[serde(crate = "serde_")]
 /// struct UriOwned {
 ///     uri: Absolute<'static>,
 /// }
 ///
 /// #[derive(Deserialize, Serialize)]
-/// # #[serde(crate = "serde")]
+/// # #[serde(crate = "serde_")]
 /// struct UriBorrowed<'a> {
 ///     uri: Absolute<'a>,
 /// }
@@ -266,15 +263,17 @@ impl<'a> Absolute<'a> {
     /// assert!(Absolute::parse("http://").unwrap().is_normalized());
     /// assert!(Absolute::parse("http://foo.rs/foo/bar").unwrap().is_normalized());
     /// assert!(Absolute::parse("foo:bar").unwrap().is_normalized());
-    /// assert!(Absolute::parse("git://rocket.rs/").unwrap().is_normalized());
     ///
+    /// assert!(!Absolute::parse("git://rocket.rs/").unwrap().is_normalized());
     /// assert!(!Absolute::parse("http:/foo//bar").unwrap().is_normalized());
     /// assert!(!Absolute::parse("foo:bar?baz&&bop").unwrap().is_normalized());
     /// ```
     pub fn is_normalized(&self) -> bool {
         let normalized_query = self.query().map_or(true, |q| q.is_normalized());
         if self.authority().is_some() && !self.path().is_empty() {
-            self.path().is_normalized(true) && normalized_query
+            self.path().is_normalized(true)
+                && self.path() != "/"
+                && normalized_query
         } else {
             self.path().is_normalized(false) && normalized_query
         }
@@ -288,10 +287,9 @@ impl<'a> Absolute<'a> {
     /// ```rust
     /// use rocket::http::uri::Absolute;
     ///
-    /// let mut uri = Absolute::parse("git://rocket.rs").unwrap();
-    /// assert!(uri.is_normalized());
-    ///
     /// let mut uri = Absolute::parse("git://rocket.rs/").unwrap();
+    /// assert!(!uri.is_normalized());
+    /// uri.normalize();
     /// assert!(uri.is_normalized());
     ///
     /// let mut uri = Absolute::parse("http:/foo//bar").unwrap();
@@ -306,16 +304,18 @@ impl<'a> Absolute<'a> {
     /// ```
     pub fn normalize(&mut self) {
         if self.authority().is_some() && !self.path().is_empty() {
-            if !self.path().is_normalized(true) {
-                self.path = self.path().to_normalized(true, true);
+            if self.path() == "/" {
+                self.set_path("");
+            } else if !self.path().is_normalized(true) {
+                self.path = self.path().to_normalized(true);
             }
-        } else if !self.path().is_normalized(false) {
-            self.path = self.path().to_normalized(false, true);
+        } else {
+            self.path = self.path().to_normalized(false);
         }
 
         if let Some(query) = self.query() {
             if !query.is_normalized() {
-                self.query = Some(query.to_normalized());
+                self.query = query.to_normalized();
             }
         }
     }
@@ -328,7 +328,8 @@ impl<'a> Absolute<'a> {
     /// use rocket::http::uri::Absolute;
     ///
     /// let mut uri = Absolute::parse("git://rocket.rs/").unwrap();
-    /// assert!(uri.is_normalized());
+    /// assert!(!uri.is_normalized());
+    /// assert!(uri.into_normalized().is_normalized());
     ///
     /// let mut uri = Absolute::parse("http:/foo//bar").unwrap();
     /// assert!(!uri.is_normalized());

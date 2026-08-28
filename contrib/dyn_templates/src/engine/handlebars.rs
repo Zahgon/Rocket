@@ -11,26 +11,26 @@ impl Engine for Handlebars<'static> {
     fn init<'a>(templates: impl Iterator<Item = (&'a str, &'a Path)>) -> Option<Self> {
         let mut hb = Handlebars::new();
         let mut ok = true;
-        for (template, path) in templates {
-            if let Err(e) = hb.register_template_file(template, path) {
-                error!(template, path = %path.display(),
-                    "failed to register Handlebars template: {e}");
-
+        for (name, path) in templates {
+            if let Err(e) = hb.register_template_file(name, path) {
+                error!("Handlebars template '{}' failed to register.", name);
+                error_!("{}", e);
+                info_!("Template path: '{}'.", path.to_string_lossy());
                 ok = false;
             }
         }
 
-        ok.then_some(hb)
+        ok.then(|| hb)
     }
 
-    fn render<C: Serialize>(&self, template: &str, context: C) -> Option<String> {
-        if self.get_template(template).is_none() {
-            error!(template, "requested Handlebars template does not exist.");
+    fn render<C: Serialize>(&self, name: &str, context: C) -> Option<String> {
+        if self.get_template(name).is_none() {
+            error_!("Handlebars template '{}' does not exist.", name);
             return None;
         }
 
-        Handlebars::render(self, template, &context)
-            .map_err(|e| error!("Handlebars render error: {}", e))
+        Handlebars::render(self, name, &context)
+            .map_err(|e| error_!("Handlebars: {}", e))
             .ok()
     }
 }

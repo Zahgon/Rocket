@@ -56,10 +56,9 @@ fn catcher() -> &'static str {
 
 mod tests {
     use super::*;
-
     use rocket::routes;
     use rocket::local::blocking::Client;
-    use rocket::http::Header;
+    use rocket::http::{Header, Status};
 
     #[test]
     fn authorized_forwards() {

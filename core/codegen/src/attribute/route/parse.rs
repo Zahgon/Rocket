@@ -3,7 +3,6 @@ use devise::ext::{SpanDiagnosticExt, TypeExt};
 use indexmap::{IndexSet, IndexMap};
 use proc_macro2::Span;
 
-use crate::attribute::suppress::Lint;
 use crate::proc_macro_ext::Diagnostics;
 use crate::http_codegen::{Method, MediaType};
 use crate::attribute::param::{Parameter, Dynamic, Guard};
@@ -43,8 +42,8 @@ pub struct Arguments {
 #[derive(Debug, FromMeta)]
 pub struct Attribute {
     #[meta(naked)]
+    pub method: SpanWrapped<Method>,
     pub uri: RouteUri,
-    pub method: Option<SpanWrapped<Method>>,
     pub data: Option<SpanWrapped<Dynamic>>,
     pub format: Option<MediaType>,
     pub rank: Option<isize>,
@@ -128,26 +127,12 @@ impl Route {
 
         // Emit a warning if a `data` param was supplied for non-payload methods.
         if let Some(ref data) = attr.data {
-            let lint = Lint::DubiousPayload;
-            match attr.method.as_ref() {
-                Some(m) if m.0.allows_request_body() == Some(false) => {
-                    diags.push(data.full_span
-                        .error("`data` cannot be used on this route")
-                        .span_note(m.span, "method does not support request payloads"))
-                },
-                Some(m) if m.0.allows_request_body().is_none() && lint.enabled(handler.span()) => {
-                    data.full_span.warning("`data` used with non-payload-supporting method")
-                        .span_note(m.span, format!("'{}' does not typically support payloads", m.0))
-                        .note(lint.how_to_suppress())
-                        .emit_as_item_tokens();
-                },
-                None if lint.enabled(handler.span()) => {
-                    data.full_span.warning("`data` used on route with wildcard method")
-                        .note("some methods may not support request payloads")
-                        .note(lint.how_to_suppress())
-                        .emit_as_item_tokens();
-                }
-                _ => { /* okay */ },
+            if !attr.method.0.supports_payload() {
+                let msg = format!("'{}' does not typically support payloads", attr.method.0);
+                // FIXME(diag: warning)
+                data.full_span.warning("`data` used with non-payload-supporting method")
+                    .span_note(attr.method.span, msg)
+                    .emit_as_item_tokens();
             }
         }
 
@@ -195,7 +180,7 @@ impl Route {
         // Collect all of the declared dynamic route parameters.
         let all_dyn_params = path_params.iter().filter_map(|p| p.dynamic())
             .chain(query_params.iter().filter_map(|p| p.dynamic()))
-            .chain(data_guard.as_ref().map(|g| &g.source));
+            .chain(data_guard.as_ref().map(|g| &g.source).into_iter());
 
         // Check for any duplicates in the dynamic route parameters.
         let mut dyn_params: IndexSet<&Dynamic> = IndexSet::new();
@@ -211,7 +196,7 @@ impl Route {
             .filter(|(name, _)| {
                 let mut all_other_guards = path_params.iter().filter_map(|p| p.guard())
                     .chain(query_params.iter().filter_map(|p| p.guard()))
-                    .chain(data_guard.as_ref());
+                    .chain(data_guard.as_ref().into_iter());
 
                 all_other_guards.all(|g| &g.name != *name)
             })

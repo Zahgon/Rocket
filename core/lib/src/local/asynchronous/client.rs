@@ -4,8 +4,7 @@ use parking_lot::RwLock;
 
 use crate::{Rocket, Phase, Orbit, Ignite, Error};
 use crate::local::asynchronous::{LocalRequest, LocalResponse};
-use crate::http::{Method, uri::Origin};
-use crate::listener::Endpoint;
+use crate::http::{Method, uri::Origin, private::cookie};
 
 /// An `async` client to construct and dispatch local requests.
 ///
@@ -56,15 +55,9 @@ pub struct Client {
 impl Client {
     pub(crate) async fn _new<P: Phase>(
         rocket: Rocket<P>,
-        tracked: bool,
-        secure: bool,
+        tracked: bool
     ) -> Result<Client, Error> {
-        let mut endpoint = Endpoint::new("local client");
-        if secure {
-            endpoint = endpoint.assume_tls();
-        }
-
-        let rocket = rocket.local_launch(endpoint).await?;
+        let rocket = rocket.local_launch().await?;
         let cookies = RwLock::new(cookie::CookieJar::new());
         Ok(Client { rocket, cookies, tracked })
     }
@@ -92,14 +85,14 @@ impl Client {
     pub(crate) fn _with_raw_cookies<F, T>(&self, f: F) -> T
         where F: FnOnce(&cookie::CookieJar) -> T
     {
-        f(&self.cookies.read())
+        f(&*self.cookies.read())
     }
 
     #[inline(always)]
     pub(crate) fn _with_raw_cookies_mut<F, T>(&self, f: F) -> T
         where F: FnOnce(&mut cookie::CookieJar) -> T
     {
-        f(&mut self.cookies.write())
+        f(&mut *self.cookies.write())
     }
 
     #[inline(always)]
@@ -113,7 +106,7 @@ impl Client {
         let rocket = self.rocket;
         rocket.shutdown().notify();
         rocket.fairings.handle_shutdown(&rocket).await;
-        rocket.deorbit()
+        rocket.into_ignite()
     }
 
     // Generates the public API methods, which call the private methods above.

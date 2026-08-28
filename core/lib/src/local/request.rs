@@ -97,41 +97,24 @@ macro_rules! pub_request_impl {
         self._request_mut().add_header(header.into());
     }
 
-    /// Set the remote address of this request to `address`.
-    ///
-    /// `address` may be any type that [can be converted into a `Endpoint`].
-    /// If `address` fails to convert, the remote is left unchanged.
-    ///
-    /// [can be converted into a `Endpoint`]: crate::listener::Endpoint#conversions
+    /// Set the remote address of this request.
     ///
     /// # Examples
     ///
     /// Set the remote address to "8.8.8.8:80":
     ///
     /// ```rust
-    /// use std::net::Ipv4Addr;
-    ///
     #[doc = $import]
     ///
     /// # Client::_test(|_, request, _| {
     /// let request: LocalRequest = request;
-    /// let req = request.remote("tcp:8.8.8.8:80");
-    ///
-    /// let remote = req.inner().remote().unwrap().tcp().unwrap();
-    /// assert_eq!(remote.ip(), Ipv4Addr::new(8, 8, 8, 8));
-    /// assert_eq!(remote.port(), 80);
+    /// let address = "8.8.8.8:80".parse().unwrap();
+    /// let req = request.remote(address);
     /// # });
     /// ```
     #[inline]
-    pub fn remote<T>(mut self, endpoint: T) -> Self
-        where T: TryInto<crate::listener::Endpoint>
-    {
-        if let Ok(endpoint) = endpoint.try_into() {
-            self.set_remote(endpoint);
-        } else {
-            warn!("remote failed to convert");
-        }
-
+    pub fn remote(mut self, address: std::net::SocketAddr) -> Self {
+        self.set_remote(address);
         self
     }
 
@@ -245,15 +228,11 @@ macro_rules! pub_request_impl {
     #[cfg(feature = "mtls")]
     #[cfg_attr(nightly, doc(cfg(feature = "mtls")))]
     pub fn identity<C: std::io::Read>(mut self, reader: C) -> Self {
-        use std::sync::Arc;
-        use crate::listener::Certificates;
+        use crate::http::{tls::util::load_certs, private::Certificates};
 
         let mut reader = std::io::BufReader::new(reader);
-        self._request_mut().connection.peer_certs = rustls_pemfile::certs(&mut reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map(|certs| Arc::new(Certificates::from(certs)))
-            .ok();
-
+        let certs = load_certs(&mut reader).map(Certificates::from);
+        self._request_mut().connection.client_certificates = certs.ok();
         self
     }
 

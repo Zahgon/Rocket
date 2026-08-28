@@ -730,7 +730,7 @@ impl<'v> Error<'v> {
             | Multipart(FieldSizeExceeded { .. })
             | Multipart(StreamSizeExceeded { .. }) => Status::PayloadTooLarge,
             Unknown => Status::InternalServerError,
-            Io(_) if self.entity == Entity::Form => Status::BadRequest,
+            Io(_) | _ if self.entity == Entity::Form => Status::BadRequest,
             Custom(status, _) => status,
             _ => Status::UnprocessableEntity
         }

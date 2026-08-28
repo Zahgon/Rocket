@@ -1,5 +1,6 @@
 use std::hash::Hash;
 use std::borrow::Cow;
+use std::fmt::Write;
 
 use state::InitCell;
 
@@ -56,9 +57,9 @@ fn decode_to_indexed_str<P: fmt::Part>(
 
     match decoded {
         Cow::Borrowed(b) if indexed.is_indexed() => {
-            let checked = IndexedStr::checked_from(b, source.as_str());
-            debug_assert!(checked.is_some(), "\nunindexed {:?} in {:?} {:?}", b, indexed, source);
-            checked.unwrap_or_else(|| IndexedStr::from(Cow::Borrowed("")))
+            let indexed = IndexedStr::checked_from(b, source.as_str());
+            debug_assert!(indexed.is_some());
+            indexed.unwrap_or_else(|| IndexedStr::from(Cow::Borrowed("")))
         }
         cow => IndexedStr::from(Cow::Owned(cow.into_owned())),
     }
@@ -93,37 +94,24 @@ impl<'a> Path<'a> {
         self.raw().as_str()
     }
 
-    /// Whether `self` is normalized, i.e, it has no empty segments except the
-    /// last one.
+    /// Whether `self` is normalized, i.e, it has no empty segments.
     ///
     /// If `absolute`, then a starting  `/` is required.
     pub(crate) fn is_normalized(&self, absolute: bool) -> bool {
-        if absolute && !self.raw().starts_with('/') {
-            return false;
-        }
-
-        self.raw_segments()
-            .rev()
-            .skip(1)
-            .all(|s| !s.is_empty())
+        (!absolute || self.raw().starts_with('/'))
+            && self.raw_segments().all(|s| !s.is_empty())
     }
 
-    /// Normalizes `self`. If `absolute`, a starting  `/` is required. If
-    /// `trail`, a trailing slash is allowed. Otherwise it is not.
-    pub(crate) fn to_normalized(self, absolute: bool, trail: bool) -> Data<'static, fmt::Path> {
-        let raw = self.raw().trim();
-        let mut path = String::with_capacity(raw.len());
-
-        if absolute || raw.starts_with('/') {
-            path.push('/');
+    /// Normalizes `self`. If `absolute`, a starting  `/` is required.
+    pub(crate) fn to_normalized(self, absolute: bool) -> Data<'static, fmt::Path> {
+        let mut path = String::with_capacity(self.raw().len());
+        let absolute = absolute || self.raw().starts_with('/');
+        for (i, seg) in self.raw_segments().filter(|s| !s.is_empty()).enumerate() {
+            if absolute || i != 0 { path.push('/'); }
+            let _ = write!(path, "{}", seg);
         }
 
-        for (i, segment) in self.raw_segments().filter(|s| !s.is_empty()).enumerate() {
-            if i != 0 { path.push('/'); }
-            path.push_str(segment.as_str());
-        }
-
-        if trail && raw.len() > 1 && raw.ends_with('/') && !path.ends_with('/') {
+        if path.is_empty() && absolute {
             path.push('/');
         }
 
@@ -133,8 +121,8 @@ impl<'a> Path<'a> {
         }
     }
 
-    /// Returns an iterator over the raw, undecoded segments, potentially empty
-    /// segments.
+    /// Returns an iterator over the raw, undecoded segments. Segments may be
+    /// empty.
     ///
     /// ### Example
     ///
@@ -143,41 +131,38 @@ impl<'a> Path<'a> {
     /// use rocket::http::uri::Origin;
     ///
     /// let uri = Origin::parse("/").unwrap();
-    /// let segments: Vec<_> = uri.path().raw_segments().collect();
-    /// assert_eq!(segments, &[""]);
+    /// assert_eq!(uri.path().raw_segments().count(), 0);
     ///
     /// let uri = Origin::parse("//").unwrap();
     /// let segments: Vec<_> = uri.path().raw_segments().collect();
     /// assert_eq!(segments, &["", ""]);
     ///
-    /// let uri = Origin::parse("/foo").unwrap();
-    /// let segments: Vec<_> = uri.path().raw_segments().collect();
-    /// assert_eq!(segments, &["foo"]);
-    ///
-    /// let uri = Origin::parse("/a/").unwrap();
-    /// let segments: Vec<_> = uri.path().raw_segments().collect();
-    /// assert_eq!(segments, &["a", ""]);
-    ///
     /// // Recall that `uri!()` normalizes static inputs.
     /// let uri = uri!("//");
+    /// assert_eq!(uri.path().raw_segments().count(), 0);
+    ///
+    /// let uri = Origin::parse("/a").unwrap();
     /// let segments: Vec<_> = uri.path().raw_segments().collect();
-    /// assert_eq!(segments, &[""]);
+    /// assert_eq!(segments, &["a"]);
     ///
     /// let uri = Origin::parse("/a//b///c/d?query&param").unwrap();
     /// let segments: Vec<_> = uri.path().raw_segments().collect();
     /// assert_eq!(segments, &["a", "", "b", "", "", "c", "d"]);
     /// ```
-    #[inline]
-    pub fn raw_segments(&self) -> impl DoubleEndedIterator<Item = &'a RawStr> {
-        let raw = self.raw().trim();
-        raw.strip_prefix(fmt::Path::DELIMITER)
-            .unwrap_or(raw)
-            .split(fmt::Path::DELIMITER)
+    #[inline(always)]
+    pub fn raw_segments(&self) -> impl Iterator<Item = &'a RawStr> {
+        let path = match self.raw() {
+            p if p.is_empty() || p == "/" => None,
+            p if p.starts_with(fmt::Path::DELIMITER) => Some(&p[1..]),
+            p => Some(p)
+        };
+
+        path.map(|p| p.split(fmt::Path::DELIMITER))
+            .into_iter()
+            .flatten()
     }
 
-    /// Returns a (smart) iterator over the percent-decoded segments. Empty
-    /// segments between non-empty segments are skipped. A trailing slash will
-    /// result in an empty segment emitted as the final item.
+    /// Returns a (smart) iterator over the non-empty, percent-decoded segments.
     ///
     /// # Example
     ///
@@ -185,52 +170,20 @@ impl<'a> Path<'a> {
     /// # #[macro_use] extern crate rocket;
     /// use rocket::http::uri::Origin;
     ///
-    /// let uri = Origin::parse("/").unwrap();
-    /// let path_segs: Vec<&str> = uri.path().segments().collect();
-    /// assert_eq!(path_segs, &[""]);
-    ///
-    /// let uri = Origin::parse("/a").unwrap();
-    /// let path_segs: Vec<&str> = uri.path().segments().collect();
-    /// assert_eq!(path_segs, &["a"]);
-    ///
-    /// let uri = Origin::parse("/a/").unwrap();
-    /// let path_segs: Vec<&str> = uri.path().segments().collect();
-    /// assert_eq!(path_segs, &["a", ""]);
-    ///
-    /// let uri = Origin::parse("/foo/bar").unwrap();
-    /// let path_segs: Vec<&str> = uri.path().segments().collect();
-    /// assert_eq!(path_segs, &["foo", "bar"]);
-    ///
-    /// let uri = Origin::parse("/foo///bar").unwrap();
-    /// let path_segs: Vec<&str> = uri.path().segments().collect();
-    /// assert_eq!(path_segs, &["foo", "bar"]);
-    ///
-    /// let uri = Origin::parse("/foo///bar//").unwrap();
-    /// let path_segs: Vec<&str> = uri.path().segments().collect();
-    /// assert_eq!(path_segs, &["foo", "bar", ""]);
-    ///
     /// let uri = Origin::parse("/a%20b/b%2Fc/d//e?query=some").unwrap();
     /// let path_segs: Vec<&str> = uri.path().segments().collect();
     /// assert_eq!(path_segs, &["a b", "b/c", "d", "e"]);
     /// ```
     pub fn segments(&self) -> Segments<'a, fmt::Path> {
-        let raw = self.raw();
         let cached = self.data.decoded_segments.get_or_init(|| {
-            let mut segments = vec![];
-            let mut raw_segments = self.raw_segments().peekable();
-            while let Some(s) = raw_segments.next() {
-                // Only allow an empty segment if it's the last one.
-                if s.is_empty() && raw_segments.peek().is_some() {
-                    continue;
-                }
-
-                segments.push(decode_to_indexed_str::<fmt::Path>(s, (&self.data.value, raw)));
-            }
-
-            segments
+            let (indexed, path) = (&self.data.value, self.raw());
+            self.raw_segments()
+                .filter(|r| !r.is_empty())
+                .map(|s| decode_to_indexed_str::<fmt::Path>(s, (indexed, path)))
+                .collect()
         });
 
-        Segments::new(raw, cached)
+        Segments::new(self.raw(), cached)
     }
 }
 
@@ -265,26 +218,30 @@ impl<'a> Query<'a> {
 
     /// Whether `self` is normalized, i.e, it has no empty segments.
     pub(crate) fn is_normalized(&self) -> bool {
-        self.raw_segments().all(|s| !s.is_empty())
+        !self.is_empty() && self.raw_segments().all(|s| !s.is_empty())
     }
 
     /// Normalizes `self`.
-    pub(crate) fn to_normalized(self) -> Data<'static, fmt::Query> {
-        let mut query = String::with_capacity(self.raw().trim().len());
+    pub(crate) fn to_normalized(self) -> Option<Data<'static, fmt::Query>> {
+        let mut query = String::with_capacity(self.raw().len());
         for (i, seg) in self.raw_segments().filter(|s| !s.is_empty()).enumerate() {
             if i != 0 { query.push('&'); }
-            query.push_str(seg.as_str());
+            let _ = write!(query, "{}", seg);
         }
 
-        Data {
+        if query.is_empty() {
+            return None;
+        }
+
+        Some(Data {
             value: IndexedStr::from(Cow::Owned(query)),
             decoded_segments: InitCell::new(),
-        }
+        })
     }
 
-    /// Returns an iterator over the undecoded, potentially empty `(name,
-    /// value)` pairs of this query. If there is no query, the iterator is
-    /// empty.
+    /// Returns an iterator over the non-empty, undecoded `(name, value)` pairs
+    /// of this query. If there is no query, the iterator is empty. Segments may
+    /// be empty.
     ///
     /// # Example
     ///
@@ -295,26 +252,18 @@ impl<'a> Query<'a> {
     /// let uri = Origin::parse("/").unwrap();
     /// assert!(uri.query().is_none());
     ///
-    /// let uri = Origin::parse("/?").unwrap();
-    /// let query_segs: Vec<_> = uri.query().unwrap().raw_segments().collect();
-    /// assert!(query_segs.is_empty());
-    ///
-    /// let uri = Origin::parse("/?foo").unwrap();
-    /// let query_segs: Vec<_> = uri.query().unwrap().raw_segments().collect();
-    /// assert_eq!(query_segs, &["foo"]);
-    ///
     /// let uri = Origin::parse("/?a=b&dog").unwrap();
     /// let query_segs: Vec<_> = uri.query().unwrap().raw_segments().collect();
     /// assert_eq!(query_segs, &["a=b", "dog"]);
     ///
+    /// // This is not normalized, so the query is `""`, the empty string.
     /// let uri = Origin::parse("/?&").unwrap();
     /// let query_segs: Vec<_> = uri.query().unwrap().raw_segments().collect();
     /// assert_eq!(query_segs, &["", ""]);
     ///
-    /// // Recall that `uri!()` normalizes, so this is equivalent to `/?`.
+    /// // Recall that `uri!()` normalizes.
     /// let uri = uri!("/?&");
-    /// let query_segs: Vec<_> = uri.query().unwrap().raw_segments().collect();
-    /// assert!(query_segs.is_empty());
+    /// assert!(uri.query().is_none());
     ///
     /// // These are raw and undecoded. Use `segments()` for decoded variant.
     /// let uri = Origin::parse("/foo/bar?a+b%2F=some+one%40gmail.com&&%26%3D2").unwrap();
@@ -323,7 +272,7 @@ impl<'a> Query<'a> {
     /// ```
     #[inline]
     pub fn raw_segments(&self) -> impl Iterator<Item = &'a RawStr> {
-        let query = match self.raw().trim() {
+        let query = match self.raw() {
             q if q.is_empty() => None,
             q => Some(q)
         };
@@ -413,12 +362,6 @@ macro_rules! impl_traits {
         impl AsRef<RawStr> for $T<'_> {
             fn as_ref(&self) -> &RawStr {
                 self.raw()
-            }
-        }
-
-        impl AsRef<std::ffi::OsStr> for $T<'_> {
-            fn as_ref(&self) -> &std::ffi::OsStr {
-                self.raw().as_ref()
             }
         }
 

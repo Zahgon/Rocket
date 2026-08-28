@@ -61,8 +61,6 @@ impl IntoOwned for Error<'_> {
     }
 }
 
-impl std::error::Error for Error<'_> { }
-
 #[cfg(test)]
 mod tests {
     use crate::parse::uri::origin_from_str;

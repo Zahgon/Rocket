@@ -8,11 +8,11 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rocket = "0.6.0-dev"
+//! rocket = "0.5.1"
 //! diesel = "2"
 //!
 //! [dependencies.rocket_db_pools]
-//! version = "0.1.0"
+//! version = "0.2.0"
 //! features = ["diesel_mysql"]
 //! ```
 //!
@@ -83,9 +83,6 @@ pub use diesel_async::pg;
 
 #[doc(inline)]
 pub use diesel_async::pooled_connection::deadpool::Pool;
-
-#[doc(inline)]
-pub use diesel_async::async_connection_wrapper::AsyncConnectionWrapper;
 
 #[doc(inline)]
 #[cfg(feature = "diesel_mysql")]

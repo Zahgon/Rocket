@@ -28,15 +28,3 @@ pub enum PathError {
     /// The segment ended with the wrapped invalid character.
     BadEnd(char),
 }
-
-impl fmt::Display for PathError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PathError::BadStart(c) => write!(f, "invalid initial character: {c:?}"),
-            PathError::BadChar(c) => write!(f, "invalid character: {c:?}"),
-            PathError::BadEnd(c) => write!(f, "invalid terminal character: {c:?}"),
-        }
-    }
-}
-
-impl std::error::Error for PathError { }

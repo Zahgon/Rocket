@@ -25,19 +25,19 @@ use crate::uri::{as_utf8_unchecked, error::Error};
 /// `Authority` is both `Serialize` and `Deserialize`:
 ///
 /// ```rust
-/// # #[cfg(feature = "serde")] mod serde_impl {
-/// # use serde as serde;
+/// # #[cfg(feature = "serde")] mod serde {
+/// # use serde_ as serde;
 /// use serde::{Serialize, Deserialize};
 /// use rocket::http::uri::Authority;
 ///
 /// #[derive(Deserialize, Serialize)]
-/// # #[serde(crate = "serde")]
+/// # #[serde(crate = "serde_")]
 /// struct UriOwned {
 ///     uri: Authority<'static>,
 /// }
 ///
 /// #[derive(Deserialize, Serialize)]
-/// # #[serde(crate = "serde")]
+/// # #[serde(crate = "serde_")]
 /// struct UriBorrowed<'a> {
 ///     uri: Authority<'a>,
 /// }
@@ -185,7 +185,7 @@ impl<'a> Authority<'a> {
         self.host.from_cow_source(&self.source)
     }
 
-    /// Returns the `port` part of the authority URI, if there is one.
+    /// Returns the port part of the authority URI, if there is one.
     ///
     /// # Example
     ///
@@ -205,28 +205,6 @@ impl<'a> Authority<'a> {
     #[inline(always)]
     pub fn port(&self) -> Option<u16> {
         self.port
-    }
-
-    /// Set the `port` of the authority URI.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # #[macro_use] extern crate rocket;
-    /// let mut uri = uri!("username:password@host:123");
-    /// assert_eq!(uri.port(), Some(123));
-    ///
-    /// uri.set_port(1024);
-    /// assert_eq!(uri.port(), Some(1024));
-    /// assert_eq!(uri, "username:password@host:1024");
-    ///
-    /// uri.set_port(None);
-    /// assert_eq!(uri.port(), None);
-    /// assert_eq!(uri, "username:password@host");
-    /// ```
-    #[inline(always)]
-    pub fn set_port<T: Into<Option<u16>>>(&mut self, port: T) {
-        self.port = port.into();
     }
 }
 

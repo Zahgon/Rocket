@@ -6,7 +6,6 @@ use crate::name::Name;
 use crate::proc_macro_ext::StringLit;
 use crate::attribute::param::{Parameter, Dynamic};
 use crate::http::uri::fmt::{Part, Kind, Path};
-use crate::attribute::suppress::Lint;
 
 #[derive(Debug)]
 pub struct Error<'a> {
@@ -32,7 +31,7 @@ impl Dynamic {
         segment: &str,
         span: Span,
     ) -> Result<Self, Error<'_>>  {
-        match Parameter::parse::<P>(segment, span)? {
+        match Parameter::parse::<P>(&segment, span)? {
             Parameter::Dynamic(d) | Parameter::Ignored(d) => Ok(d),
             Parameter::Guard(g) => Ok(g.source),
             Parameter::Static(_) => Err(Error::new(segment, span, ErrorKind::Static)),
@@ -48,7 +47,6 @@ impl Parameter {
         let mut trailing = false;
 
         // Check if this is a dynamic param. If so, check its well-formedness.
-        let lint = Lint::SegmentChars;
         if segment.starts_with('<') && segment.ends_with('>') {
             let mut name = &segment[1..(segment.len() - 1)];
             if name.ends_with("..") {
@@ -73,13 +71,12 @@ impl Parameter {
             }
         } else if segment.is_empty() {
             return Err(Error::new(segment, source_span, ErrorKind::Empty));
-        } else if segment.starts_with('<') && lint.enabled(source_span) {
+        } else if segment.starts_with('<') {
             let candidate = candidate_from_malformed(segment);
             source_span.warning("`segment` starts with `<` but does not end with `>`")
                 .help(format!("perhaps you meant the dynamic parameter `<{}>`?", candidate))
-                .note(lint.how_to_suppress())
                 .emit_as_item_tokens();
-        } else if (segment.contains('>') || segment.contains('<')) && lint.enabled(source_span) {
+        } else if segment.contains('>') || segment.contains('<') {
             source_span.warning("`segment` contains `<` or `>` but is not a dynamic parameter")
                 .emit_as_item_tokens();
         }

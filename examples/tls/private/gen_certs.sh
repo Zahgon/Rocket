@@ -8,8 +8,6 @@
 #   rsa_sha256
 #   ecdsa_nistp256_sha256
 #   ecdsa_nistp384_sha384
-#   ecdsa_nistp521_sha512
-#   client
 #
 # Generate a certificate of the [cert-kind] key type, or if no cert-kind is
 # specified, all of the certificates.
@@ -115,51 +113,15 @@ function gen_ecdsa_nistp384_sha384() {
   rm ca_cert.srl server.csr ecdsa_nistp384_sha384_key.pem
 }
 
-function gen_ecdsa_nistp521_sha512() {
-  gen_ca_if_non_existent
-
-  openssl ecparam -out ecdsa_nistp521_sha512_key.pem -name secp521r1 -genkey
-
-  # Convert to pkcs8 format supported by rustls
-  openssl pkcs8 -topk8 -nocrypt -in ecdsa_nistp521_sha512_key.pem \
-    -out ecdsa_nistp521_sha512_key_pkcs8.pem
-
-  openssl req -new -nodes -sha512 -key ecdsa_nistp521_sha512_key_pkcs8.pem \
-    -subj "${SUBJECT}" -out server.csr
-
-  openssl x509 -req -sha512 -extfile <(printf "subjectAltName=${ALT}") -days 3650 \
-    -CA ca_cert.pem -CAkey ca_key.pem -CAcreateserial \
-    -in server.csr -out ecdsa_nistp521_sha512_cert.pem
-
-  openssl pkcs12 -export -password pass:rocket -in ecdsa_nistp521_sha512_cert.pem \
-    -inkey ecdsa_nistp521_sha512_key_pkcs8.pem -out ecdsa_nistp521_sha512.p12
-
-  rm ca_cert.srl server.csr ecdsa_nistp521_sha512_key.pem
-}
-
-function gen_client_cert() {
-  openssl req -newkey rsa:2048 -nodes -keyout client.key -out client.csr -subj "/C=US/ST=California/L=Silicon Valley/O=Rocket/CN=Rocket TLS Example/emailAddress=example@rocket.local"
-  openssl x509 -req -extfile <(printf "subjectAltName=DNS:${ALT}") -days 3650 \
-    -in client.csr -CA ca_cert.pem -CAkey ca_key.pem -CAcreateserial \
-    -out client.crt
-
-  cat client.key client.crt ca_cert.pem > client.pem
-  rm client.key client.crt client.csr ca_cert.srl
-}
-
 case $1 in
   ed25519) gen_ed25519 ;;
   rsa_sha256) gen_rsa_sha256 ;;
   ecdsa_nistp256_sha256) gen_ecdsa_nistp256_sha256 ;;
   ecdsa_nistp384_sha384) gen_ecdsa_nistp384_sha384 ;;
-  ecdsa_nistp521_sha512) gen_ecdsa_nistp521_sha512 ;;
-  client) gen_client_cert ;;
   *)
     gen_ed25519
     gen_rsa_sha256
     gen_ecdsa_nistp256_sha256
     gen_ecdsa_nistp384_sha384
-    gen_ecdsa_nistp521_sha512
-    gen_client_cert
     ;;
 esac

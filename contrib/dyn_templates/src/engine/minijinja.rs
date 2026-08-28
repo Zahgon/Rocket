@@ -42,23 +42,24 @@ impl Engine for Environment<'static> {
         Some(env)
     }
 
-    fn render<C: Serialize>(&self, template: &str, context: C) -> Option<String> {
-        let Ok(templ) = self.get_template(template) else {
-            error!(template, "requested template does not exist");
-            return None;
+    fn render<C: Serialize>(&self, name: &str, context: C) -> Option<String> {
+        let template = match self.get_template(name) {
+            Ok(template) => template,
+            Err(e) => {
+                error_!("Minijinja template '{name}' error: {e}");
+                return None;
+            }
         };
 
-        match templ.render(context) {
+        match template.render(context) {
             Ok(result) => Some(result),
             Err(e) => {
-                span_error!("templating", template, "failed to render Minijinja template" => {
-                    let mut error = Some(&e as &dyn std::error::Error);
-                    while let Some(err) = error {
-                        error!("{err}");
-                        error = err.source();
-                    }
-                });
-
+                error_!("Error rendering Minijinja template '{name}': {e}");
+                let mut error = &e as &dyn std::error::Error;
+                while let Some(source) = error.source() {
+                    error_!("caused by: {source}");
+                    error = source;
+                }
                 None
             }
         }

@@ -318,7 +318,7 @@ impl Parse for InternalUriParams {
         let fn_args = fn_args.into_iter().collect();
 
         input.parse::<Token![,]>()?;
-        let uri_mac = input.parse::<RoutedUri>()?;
+        let uri_params = input.parse::<RoutedUri>()?;
 
         let span = route_uri_str.subspan(1..route_uri.path().len() + 1);
         let path_params = Parameter::parse_many::<fmt::Path>(route_uri.path().as_str(), span)
@@ -334,7 +334,13 @@ impl Parse for InternalUriParams {
                 .collect::<Vec<_>>()
         }).unwrap_or_default();
 
-        Ok(InternalUriParams { route_uri, path_params, query_params, fn_args, uri_mac })
+        Ok(InternalUriParams {
+            route_uri,
+            path_params,
+            query_params,
+            fn_args,
+            uri_mac: uri_params
+        })
     }
 }
 
@@ -421,7 +427,10 @@ impl RoutedUri {
 
 impl Arg {
     fn is_named(&self) -> bool {
-        matches!(self, Arg::Named(..))
+        match *self {
+            Arg::Named(..) => true,
+            _ => false
+        }
     }
 
     fn unnamed(&self) -> &ArgExpr {
@@ -481,7 +490,7 @@ impl UriExpr {
         let lit = input.parse::<StringLit>()?;
         let uri = Uri::parse::<Origin<'_>>(&lit)
             .or_else(|e| Uri::parse::<Absolute<'_>>(&lit).map_err(|e2| (e, e2)))
-            .map_err(|(e1, e2)| if lit.starts_with('/') { e1 } else { e2 })
+            .map_err(|(e1, e2)| lit.starts_with('/').then(|| e1).unwrap_or(e2))
             .or_else(|e| uri_err(&lit, e))?;
 
         if matches!(&uri, Uri::Origin(o) if o.query().is_some())

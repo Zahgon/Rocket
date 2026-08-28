@@ -80,10 +80,9 @@ pub fn _catch(
                 }
 
                 #_catcher::StaticInfo {
-                    name: ::core::stringify!(#user_catcher_fn_name),
+                    name: stringify!(#user_catcher_fn_name),
                     code: #status_code,
                     handler: monomorphized_function,
-                    location: (::core::file!(), ::core::line!(), ::core::column!()),
                 }
             }
 

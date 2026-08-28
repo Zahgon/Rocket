@@ -1,5 +1,5 @@
-use rocket::serde::Serialize;
-use diesel::{self, prelude::*};
+use serde::{Deserialize, Serialize};
+use diesel::{self, result::QueryResult, prelude::*};
 
 mod schema {
     table! {
@@ -16,7 +16,6 @@ use self::schema::tasks;
 use crate::DbConn;
 
 #[derive(Serialize, Queryable, Insertable, Debug, Clone)]
-#[serde(crate = "rocket::serde")]
 #[diesel(table_name = tasks)]
 pub struct Task {
     #[serde(skip_deserializing)]
@@ -25,7 +24,7 @@ pub struct Task {
     pub completed: bool
 }
 
-#[derive(Debug, FromForm)]
+#[derive(Debug, Deserialize)]
 pub struct Todo {
     pub description: String,
 }

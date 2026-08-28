@@ -1,22 +1,17 @@
-use std::net::{SocketAddr, Ipv4Addr};
-
 use rocket::config::Config;
 use rocket::fairing::AdHoc;
 use rocket::futures::channel::oneshot;
-use rocket::listener::tcp::TcpListener;
 
 #[rocket::async_test]
 async fn on_ignite_fairing_can_inspect_port() {
     let (tx, rx) = oneshot::channel();
-    let rocket = rocket::custom(Config::debug_default())
+    let rocket = rocket::custom(Config { port: 0, ..Config::debug_default() })
         .attach(AdHoc::on_liftoff("Send Port -> Channel", move |rocket| {
             Box::pin(async move {
-                let tcp = rocket.endpoints().find_map(|v| v.tcp());
-                tx.send(tcp.unwrap().port()).expect("send okay");
+                tx.send(rocket.config().port).unwrap();
             })
         }));
 
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-    rocket::tokio::spawn(rocket.try_launch_on(TcpListener::bind(addr)));
+    rocket::tokio::spawn(rocket.launch());
     assert_ne!(rx.await.unwrap(), 0);
 }

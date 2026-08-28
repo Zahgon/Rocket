@@ -114,6 +114,14 @@ error[E0728]: `await` is only allowed inside `async` functions and blocks
 73 |         let _ = rocket::build().launch().await;
    |                                          ^^^^^ only allowed inside `async` functions and blocks
 
+error[E0728]: `await` is only allowed inside `async` functions and blocks
+  --> tests/ui-fail-nightly/async-entry.rs:73:42
+   |
+72 |     fn rocket() -> _ {
+   |     ----------- this is not `async`
+73 |         let _ = rocket::build().launch().await;
+   |                                          ^^^^^ only allowed inside `async` functions and blocks
+
 error[E0277]: `main` has invalid return type `Rocket<Build>`
   --> tests/ui-fail-nightly/async-entry.rs:94:20
    |

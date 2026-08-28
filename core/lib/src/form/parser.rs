@@ -3,8 +3,8 @@ use either::Either;
 
 use crate::request::{Request, local_cache_once};
 use crate::data::{Data, Limits, Outcome};
+use crate::form::{SharedStack, prelude::*};
 use crate::http::{RawStr, Status};
-use crate::form::prelude::*;
 
 type Result<'r, T> = std::result::Result<T, Error<'r>>;
 
@@ -115,7 +115,7 @@ impl<'r> Iterator for RawStrParser<'r> {
             }
         };
 
-        trace!(%name, %value, "url-encoded field");
+        trace_!("url-encoded field: {:?}", (name, value));
         let name_val = match (name.url_decode_lossy(), value.url_decode_lossy()) {
             (Borrowed(name), Borrowed(val)) => (name, val),
             (Borrowed(name), Owned(v)) => (name, self.buffer.push(v)),
@@ -168,7 +168,7 @@ impl<'r, 'i> MultipartParser<'r, 'i> {
         };
 
         // A field with a content-type is data; one without is "value".
-        trace!(?field, "multipart field");
+        trace_!("multipart field: {:?}", field);
         let content_type = field.content_type().and_then(|m| m.as_ref().parse().ok());
         let field = if let Some(content_type) = content_type {
             let (name, file_name) = match (field.name(), field.file_name()) {

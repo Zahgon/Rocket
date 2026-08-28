@@ -1,11 +1,13 @@
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 
-use rocket::{error, Build, Ignite, Phase, Rocket, Sentinel, Orbit};
+use rocket::{error, info_, Build, Ignite, Phase, Rocket, Sentinel, Orbit};
 use rocket::fairing::{self, Fairing, Info, Kind};
 use rocket::request::{FromRequest, Outcome, Request};
-use rocket::figment::providers::Serialized;
 use rocket::http::Status;
+
+use rocket::yansi::Paint;
+use rocket::figment::providers::Serialized;
 
 use crate::Pool;
 
@@ -120,10 +122,10 @@ pub trait Database: From<Self::Pool> + DerefMut<Target = Self::Pool> + Send + Sy
             return Some(db);
         }
 
-        let conn = std::any::type_name::<Self>();
-        error!("`{conn}::init()` is not attached\n\
-            the fairing must be attached to use `{conn}` in routes.");
-
+        let dbtype = std::any::type_name::<Self>().bold().primary();
+        error!("Attempted to fetch unattached database `{}`.", dbtype);
+        info_!("`{}{}` fairing must be attached prior to using this database.",
+            dbtype.linger(), "::init()".resetting());
         None
     }
 }
@@ -265,7 +267,7 @@ impl<D: Database> Fairing for Initializer<D> {
         match <D::Pool>::init(&figment).await {
             Ok(pool) => Ok(rocket.manage(D::from(pool))),
             Err(e) => {
-                error!("database initialization failed: {e}");
+                error!("failed to initialize database: {}", e);
                 Err(rocket)
             }
         }

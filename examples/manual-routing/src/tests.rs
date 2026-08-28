@@ -1,6 +1,6 @@
 use super::*;
 use rocket::local::blocking::Client;
-use rocket::http::ContentType;
+use rocket::http::{ContentType, Status};
 
 fn test(uri: &str, content_type: ContentType, status: Status, body: String) {
     let client = Client::tracked(rocket()).unwrap();
@@ -24,7 +24,7 @@ fn test_name() {
 
 #[test]
 fn test_echo() {
-    let uri = "/echo/echo%20this%20text".to_string();
+    let uri = format!("/echo/echo%20this%20text");
     test(&uri, ContentType::Plain, Status::Ok, "echo this text".into());
 }
 

@@ -12,7 +12,7 @@
 //!
 //!      ```toml
 //!      [dependencies.rocket_dyn_templates]
-//!      version = "0.1.0"
+//!      version = "0.2.0"
 //!      features = ["handlebars", "tera", "minijinja"]
 //!      ```
 //!
@@ -29,7 +29,7 @@
 //!
 //!      [configurable]: #configuration
 //!      [Tera]: https://docs.rs/crate/tera/1
-//!      [Handlebars]: https://docs.rs/crate/handlebars/6
+//!      [Handlebars]: https://docs.rs/crate/handlebars/5
 //!      [MiniJinja]: https://docs.rs/minijinja/2
 //!
 //!   3. Attach `Template::fairing()` and return a [`Template`] from your routes
@@ -79,7 +79,7 @@
 //! See the [configuration chapter] of the guide for more information on
 //! configuration.
 //!
-//! [configuration chapter]: https://rocket.rs/master/guide/configuration
+//! [configuration chapter]: https://rocket.rs/v0.5/guide/configuration
 //!
 //! ## Template Naming and Content-Types
 //!
@@ -116,8 +116,6 @@
 //! during rendering. The context can be any [`Serialize`] type that serializes
 //! to an `Object` (a dictionary) value. The [`context!`] macro can be used to
 //! create inline `Serialize`-able context objects.
-//!
-//! [`Serialize`]: rocket::serde::Serialize
 //!
 //! ```rust
 //! # #[macro_use] extern crate rocket;
@@ -167,7 +165,7 @@
 //! builds, template reloading is disabled to improve performance and cannot be
 //! enabled.
 //!
-//! [attached]: rocket::Rocket::attach()
+//! [attached]: Rocket::attach()
 //!
 //! ### Metadata and Rendering to `String`
 //!
@@ -176,7 +174,7 @@
 //! ([`Metadata::contains_template()`]), and to render templates to `String`
 //! ([`Metadata::render()`]).
 
-#![doc(html_root_url = "https://api.rocket.rs/master/rocket_dyn_templates")]
+#![doc(html_root_url = "https://api.rocket.rs/v0.5/rocket_dyn_templates")]
 #![doc(html_favicon_url = "https://rocket.rs/images/favicon.ico")]
 #![doc(html_logo_url = "https://rocket.rs/images/logo-boxed.png")]
 

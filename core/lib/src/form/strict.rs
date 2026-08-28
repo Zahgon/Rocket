@@ -93,8 +93,8 @@ impl<'v, T: FromForm<'v>> FromForm<'v> for Strict<T> {
     type Context = T::Context;
 
     #[inline(always)]
-    fn init(_: Options) -> Self::Context {
-        T::init(Options { strict: true })
+    fn init(opts: Options) -> Self::Context {
+        T::init(Options { strict: true, ..opts })
     }
 
     #[inline(always)]

@@ -41,7 +41,7 @@ use crate::{Rocket, Ignite};
 ///
 /// # use rocket::{Config, error::ErrorKind};
 /// # rocket::async_test(async {
-/// #    let result = rocket().reconfigure(Config::debug_default()).ignite().await;
+/// #    let result = rocket().configure(Config::debug_default()).ignite().await;
 /// #    assert!(matches!(result.unwrap_err().kind(), ErrorKind::SentinelAborts(..)));
 /// # })
 /// ```
@@ -76,7 +76,7 @@ use crate::{Rocket, Ignite};
 ///
 /// # use rocket::{Config, error::ErrorKind};
 /// # rocket::async_test(async {
-/// #    rocket().reconfigure(Config::debug_default()).ignite().await.unwrap();
+/// #    rocket().configure(Config::debug_default()).ignite().await.unwrap();
 /// # })
 /// ```
 ///
@@ -159,7 +159,7 @@ use crate::{Rocket, Ignite};
 ///
 /// **Note:** _Rocket actively discourages using `impl Trait` in route
 /// signatures. In addition to impeding sentinel discovery, doing so decreases
-/// the ability to glean a handler's functionality based on its type signature._
+/// the ability to gleam a handler's functionality based on its type signature._
 ///
 /// The return type of the route `f` depends on its implementation. At present,
 /// it is not possible to name the underlying concrete type of an `impl Trait`
@@ -263,7 +263,7 @@ use crate::{Rocket, Ignite};
 ///             return true;
 ///         }
 ///
-///         if !rocket.catchers().any(|c| c.code == Some(400) && c.base() == "/") {
+///         if !rocket.catchers().any(|c| c.code == Some(400) && c.base == "/") {
 ///             return true;
 ///         }
 ///
@@ -317,71 +317,23 @@ impl<T> Sentinel for crate::response::Debug<T> {
     }
 }
 
-/// Information resolved at compile-time from eligible [`Sentinel`] types.
-///
-/// Returned as a result of the [`ignition`](Rocket::ignite()) method, this
-/// struct contains information about a resolved sentinel including the type ID
-/// and type name. It is made available via the [`ErrorKind::SentinelAborts`]
-/// variant of the [`ErrorKind`] enum.
-///
-/// [`ErrorKind`]: crate::error::ErrorKind
-/// [`ErrorKind::SentinelAborts`]: crate::error::ErrorKind::SentinelAborts
-///
-// The information resolved from a `T: ?Sentinel` by the `resolve!()` macro.
+/// The information resolved from a `T: ?Sentinel` by the `resolve!()` macro.
 #[derive(Clone, Copy)]
 pub struct Sentry {
     /// The type ID of `T`.
-    #[doc(hidden)]
     pub type_id: TypeId,
     /// The type name `T` as a string.
-    #[doc(hidden)]
     pub type_name: &'static str,
     /// The type ID of type in which `T` is nested if not a top-level type.
-    #[doc(hidden)]
     pub parent: Option<TypeId>,
     /// The source (file, column, line) location of the resolved `T`.
-    #[doc(hidden)]
     pub location: (&'static str, u32, u32),
     /// The value of `<T as Sentinel>::SPECIALIZED` or the fallback.
     ///
     /// This is `true` when `T: Sentinel` and `false` when `T: !Sentinel`.
-    #[doc(hidden)]
     pub specialized: bool,
     /// The value of `<T as Sentinel>::abort` or the fallback.
-    #[doc(hidden)]
     pub abort: fn(&Rocket<Ignite>) -> bool,
-}
-
-impl Sentry {
-    /// Returns the type ID of the resolved sentinel type.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rocket::Sentry;
-    ///
-    /// fn handle_error(sentry: &Sentry) {
-    ///     let type_id = sentry.type_id();
-    /// }
-    /// ```
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
-    }
-
-    /// Returns the type name of the resolved sentinel type.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rocket::Sentry;
-    ///
-    /// fn handle_error(sentry: &Sentry) {
-    ///     let type_name = sentry.type_name();
-    ///     println!("Type name: {}", type_name);
-    /// }
-    pub fn type_name(&self) -> &'static str {
-        self.type_name
-    }
 }
 
 /// Query `sentinels`, once for each unique `type_id`, returning an `Err` of all
@@ -495,6 +447,7 @@ pub mod resolution {
 #[cfg(test)]
 mod test {
     use std::any::TypeId;
+    use crate::sentinel::resolve;
 
     struct NotASentinel;
     struct YesASentinel;

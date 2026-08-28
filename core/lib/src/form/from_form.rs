@@ -65,7 +65,7 @@ use crate::http::uncased::AsUncased;
 /// [FromFormField]: crate::form::FromFormField
 /// [`shift()`ed]: NameView::shift()
 /// [`key()`]: NameView::key()
-/// [forms guide]: https://rocket.rs/master/guide/requests/#forms
+/// [forms guide]: https://rocket.rs/v0.5/guide/requests/#forms
 ///
 /// # Parsing Strategy
 ///
@@ -818,8 +818,8 @@ impl<'v, K, V> FromForm<'v> for BTreeMap<K, V>
 impl<'v, T: FromForm<'v>> FromForm<'v> for Option<T> {
     type Context = <T as FromForm<'v>>::Context;
 
-    fn init(_: Options) -> Self::Context {
-        T::init(Options { strict: true })
+    fn init(opts: Options) -> Self::Context {
+        T::init(Options { strict: true, ..opts })
     }
 
     fn push_value(ctxt: &mut Self::Context, field: ValueField<'v>) {

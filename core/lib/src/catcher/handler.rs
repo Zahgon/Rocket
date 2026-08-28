@@ -118,8 +118,7 @@ impl<F: Clone + Sync + Send + 'static> Handler for F
     }
 }
 
-// Used in tests! Do not use, please.
-#[doc(hidden)]
+#[cfg(test)]
 pub fn dummy_handler<'r>(_: Status, _: &'r Request<'_>) -> BoxFuture<'r> {
    Box::pin(async move { Ok(Response::new()) })
 }

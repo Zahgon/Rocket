@@ -127,20 +127,19 @@ async fn generic_responder() {
     let local_req = client.get("/");
     let req = local_req.inner();
 
-    let v: MyResult<'_, _, (), ContentType, Cookie<'static>> = MyResult::Ok(Json("hi"));
+    let v: MyResult<_, (), ContentType, Cookie<'static>> = MyResult::Ok(Json("hi"));
     let mut r = v.respond_to(req).unwrap();
     assert_eq!(r.status(), Status::Ok);
     assert_eq!(r.content_type().unwrap(), ContentType::JSON);
     assert_eq!(r.body_mut().to_string().await.unwrap(), "\"hi\"");
 
-    let bytes = &[7, 13, 23];
-    let v: MyResult<'_, (), &[u8], _, _> = MyResult::Err(bytes, ContentType::JPEG, Accept::Text);
+    let v: MyResult<(), &[u8], _, _> = MyResult::Err(&[7, 13, 23], ContentType::JPEG, Accept::Text);
     let mut r = v.respond_to(req).unwrap();
     assert_eq!(r.status(), Status::NotFound);
     assert_eq!(r.content_type().unwrap(), ContentType::JPEG);
-    assert_eq!(r.body_mut().to_bytes().await.unwrap(), bytes);
+    assert_eq!(r.body_mut().to_bytes().await.unwrap(), vec![7, 13, 23]);
 
-    let v: MyResult<'_, (), &[u8], ContentType, Accept> = MyResult::Other("beep beep");
+    let v: MyResult<(), &[u8], ContentType, Accept> = MyResult::Other("beep beep");
     let mut r = v.respond_to(req).unwrap();
     assert_eq!(r.status(), Status::InternalServerError);
     assert_eq!(r.content_type().unwrap(), ContentType::Text);

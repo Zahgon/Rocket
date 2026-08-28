@@ -31,8 +31,7 @@ fn weighted_media_type<'a>(input: &mut Input<'a>) -> Result<'a, QMediaType> {
 
 #[parser]
 fn accept<'a>(input: &mut Input<'a>) -> Result<'a, Accept> {
-    let vec = series(|i| surrounded(i, weighted_media_type, is_whitespace), ',')?;
-    Accept(std::borrow::Cow::Owned(vec))
+    Accept(series(|i| surrounded(i, weighted_media_type, is_whitespace), ',')?)
 }
 
 pub fn parse_accept(input: &str) -> Result<'_, Accept> {

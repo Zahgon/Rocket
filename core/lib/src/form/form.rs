@@ -4,14 +4,15 @@ use crate::Request;
 use crate::outcome::try_outcome;
 use crate::data::{Data, FromData, Outcome};
 use crate::http::{RawStr, ext::IntoOwned};
-use crate::form::prelude::{*, parser::{Parser, RawStrParser}};
+use crate::form::{SharedStack, parser::{Parser, RawStrParser}};
+use crate::form::prelude::*;
 
 /// A data guard for [`FromForm`] types.
 ///
 /// This type implements the [`FromData`] trait. It provides a generic means to
 /// parse arbitrary structures from incoming form data.
 ///
-/// See the [forms guide](https://rocket.rs/master/guide/requests#forms) for
+/// See the [forms guide](https://rocket.rs/v0.5/guide/requests#forms) for
 /// general form support documentation.
 ///
 /// # Leniency

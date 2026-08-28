@@ -100,19 +100,19 @@ impl StatusClass {
 /// range `[100, 600)` is allowed to deserialize into a `Status`.`
 ///
 /// ```rust
-/// # #[cfg(feature = "serde")] mod serde_impl {
-/// # use serde as serde;
+/// # #[cfg(feature = "serde")] mod serde {
+/// # use serde_ as serde;
 /// use serde::{Serialize, Deserialize};
 /// use rocket::http::Status;
 ///
 /// #[derive(Deserialize, Serialize)]
-/// # #[serde(crate = "serde")]
+/// # #[serde(crate = "serde_")]
 /// struct Foo {
 ///     status: Status,
 /// }
 /// # }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy)]
 pub struct Status {
     /// The HTTP status code associated with this status.
     pub code: u16,
@@ -354,14 +354,41 @@ impl fmt::Display for Status {
     }
 }
 
+impl std::hash::Hash for Status {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.code.hash(state)
+    }
+}
+
+impl PartialEq for Status {
+    fn eq(&self, other: &Self) -> bool {
+        self.code.eq(&other.code)
+    }
+}
+
+impl Eq for Status { }
+
+impl PartialOrd for Status {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.code.partial_cmp(&other.code)
+    }
+}
+
+impl Ord for Status {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.code.cmp(&other.code)
+    }
+}
+
 #[cfg(feature = "serde")]
-mod serde_impl {
+mod serde {
+    use std::fmt;
     use super::*;
 
-    use serde::ser::{Serialize, Serializer};
-    use serde::de::{Deserialize, Deserializer, Error, Visitor, Unexpected};
+    use serde_::ser::{Serialize, Serializer};
+    use serde_::de::{Deserialize, Deserializer, Error, Visitor, Unexpected};
 
-    impl Serialize for Status {
+    impl<'a> Serialize for Status {
         fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
             serializer.serialize_u16(self.code)
         }

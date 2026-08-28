@@ -4,7 +4,7 @@ use std::ops::Deref;
 use std::hash::{Hash, Hasher};
 use std::borrow::Cow;
 
-use syn::{Ident, ext::IdentExt as _, visit::Visit};
+use syn::{self, Ident, ext::IdentExt as _, visit::Visit};
 use proc_macro2::{Span, TokenStream};
 use devise::ext::{PathExt, TypeExt as _};
 use rocket_http::ext::IntoOwned;
@@ -21,12 +21,17 @@ pub trait ReturnTypeExt {
     fn ty(&self) -> Option<&syn::Type>;
 }
 
+pub trait TokenStreamExt {
+    fn respanned(&self, span: Span) -> Self;
+}
+
 pub trait FnArgExt {
     fn typed(&self) -> Option<(&syn::Ident, &syn::Type)>;
     fn wild(&self) -> Option<&syn::PatWild>;
 }
 
 pub trait TypeExt {
+    fn unfold(&self) -> Vec<Child<'_>>;
     fn unfold_with_ty_macros(&self, names: &[&str], mapper: MacTyMapFn) -> Vec<Child<'_>>;
     fn is_concrete(&self, generic_ident: &[&Ident]) -> bool;
 }
@@ -80,21 +85,18 @@ impl IdentExt for syn::Ident {
         self.prepend(crate::ROCKET_IDENT_PREFIX)
     }
 
-    /// Create a unique version of the ident `self` based on the hash of `self`,
-    /// its span, the current call site, and any additional information provided
-    /// by the closure `f`.
-    ///
-    /// Span::source_file() / line / col are not stable, but the byte span and
-    /// some kind of scope identifier do appear in the `Debug` representation
-    /// for `Span`. And they seem to be consistent across compilations: "#57
-    /// bytes(106..117)" at the time of writing. So we use that.
     fn uniqueify_with<F: FnMut(&mut dyn Hasher)>(&self, mut f: F) -> syn::Ident {
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::collections::hash_map::DefaultHasher;
+
+        // Keep a global counter (+ thread ID later) to generate unique ids.
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
-        format!("{:?}", self.span()).hash(&mut hasher);
-        format!("{:?}", Span::call_site()).hash(&mut hasher);
+        std::process::id().hash(&mut hasher);
+        std::thread::current().id().hash(&mut hasher);
+        COUNTER.fetch_add(1, Ordering::AcqRel).hash(&mut hasher);
         f(&mut hasher);
 
         self.append(&format!("_{}", hasher.finish()))
@@ -107,6 +109,15 @@ impl ReturnTypeExt for syn::ReturnType {
             syn::ReturnType::Default => None,
             syn::ReturnType::Type(_, ty) => Some(ty),
         }
+    }
+}
+
+impl TokenStreamExt for TokenStream {
+    fn respanned(&self, span: Span) -> Self {
+        self.clone().into_iter().map(|mut token| {
+            token.set_span(span);
+            token
+        }).collect()
     }
 }
 
@@ -143,6 +154,10 @@ fn macro_inner_ty(t: &syn::TypeMacro, names: &[&str], m: MacTyMapFn) -> Option<s
 }
 
 impl TypeExt for syn::Type {
+    fn unfold(&self) -> Vec<Child<'_>> {
+        self.unfold_with_ty_macros(&[], |_| None)
+    }
+
     fn unfold_with_ty_macros(&self, names: &[&str], mapper: MacTyMapFn) -> Vec<Child<'_>> {
         struct Visitor<'a, 'm> {
             parents: Vec<Cow<'a, syn::Type>>,
@@ -190,7 +205,7 @@ impl TypeExt for syn::Type {
     fn is_concrete(&self, generics: &[&Ident]) -> bool {
         struct ConcreteVisitor<'i>(bool, &'i [&'i Ident]);
 
-        impl<'a> Visit<'a> for ConcreteVisitor<'_> {
+        impl<'a, 'i> Visit<'a> for ConcreteVisitor<'i> {
             fn visit_type(&mut self, ty: &'a syn::Type) {
                 use syn::Type::*;
 
@@ -225,10 +240,10 @@ impl GenericsExt for syn::Generics {
 mod tests {
     #[test]
     fn test_type_unfold_is_generic() {
-        use super::TypeExt;
+        use super::{TypeExt, syn};
 
         let ty: syn::Type = syn::parse_quote!(A<B, C<impl Foo>, Box<dyn Foo>, Option<T>>);
-        let children = ty.unfold_with_ty_macros(&[], |_| None);
+        let children = ty.unfold();
         assert_eq!(children.len(), 8);
 
         let gen_ident = format_ident!("T");

@@ -14,7 +14,7 @@ macro_rules! assert_uri_eq {
             let actual = $uri;
             let expected = rocket::http::uri::Uri::parse_any($expected).expect("valid URI");
             if actual != expected {
-                panic!("\nURI mismatch: got {}, expected {}\nGot) {:?}\nExpected) {:?}\n",
+                panic!("URI mismatch: got {}, expected {}\nGot) {:?}\nExpected) {:?}",
                     actual, expected, actual, expected);
             }
         )+
@@ -186,61 +186,37 @@ fn check_simple_named() {
 fn check_route_prefix_suffix() {
     assert_uri_eq! {
         uri!(index) => "/",
-        uri!("/") => "/",
         uri!("/", index) => "/",
         uri!("/hi", index) => "/hi",
-        uri!("/foo", index) => "/foo",
-        uri!("/hi/", index) => "/hi/",
-        uri!("/foo/", index) => "/foo/",
         uri!("/", simple3(10)) => "/?id=10",
         uri!("/hi", simple3(11)) => "/hi?id=11",
-        uri!("/hi/", simple3(11)) => "/hi/?id=11",
         uri!("/mount", simple(100)) => "/mount/100",
         uri!("/mount", simple(id = 23)) => "/mount/23",
-        uri!("/mount/", simple(100)) => "/mount/100",
-        uri!("/mount/", simple(id = 23)) => "/mount/23",
         uri!("/another", simple(100)) => "/another/100",
         uri!("/another", simple(id = 23)) => "/another/23",
-        uri!("/foo") => "/foo",
-        uri!("/foo/") => "/foo/",
-        uri!("/foo///") => "/foo/",
-        uri!("/foo/bar/") => "/foo/bar/",
     }
 
     assert_uri_eq! {
         uri!("http://rocket.rs", index) => "http://rocket.rs",
-        uri!("http://rocket.rs/", index) => "http://rocket.rs/",
-        uri!("http://rocket.rs///", index) => "http://rocket.rs/",
-        uri!("http://rocket.rs/foo", index) => "http://rocket.rs/foo",
-        uri!("http://rocket.rs/foo/", index) => "http://rocket.rs/foo/",
+        uri!("http://rocket.rs/", index) => "http://rocket.rs",
+        uri!("http://rocket.rs", index) => "http://rocket.rs",
         uri!("http://", index) => "http://",
-        uri!("http:///", index) => "http:///",
-        uri!("http:////", index) => "http:///",
-        uri!("ftp:/", index) => "ftp:/",
+        uri!("ftp:", index) => "ftp:/",
     }
 
     assert_uri_eq! {
         uri!("http://rocket.rs", index, "?foo") => "http://rocket.rs?foo",
-        uri!("http://rocket.rs", index, "?") => "http://rocket.rs?",
-        uri!("http://rocket.rs", index, "#") => "http://rocket.rs#",
-        uri!("http://rocket.rs", index, "#bar") => "http://rocket.rs#bar",
+        uri!("http://rocket.rs/", index, "#bar") => "http://rocket.rs#bar",
         uri!("http://rocket.rs", index, "?bar#baz") => "http://rocket.rs?bar#baz",
-        uri!("http://rocket.rs/", index, "?foo") => "http://rocket.rs/?foo",
-        uri!("http://rocket.rs/", index, "?") => "http://rocket.rs/?",
-        uri!("http://rocket.rs/", index, "#") => "http://rocket.rs/#",
-        uri!("http://rocket.rs/", index, "#bar") => "http://rocket.rs/#bar",
-        uri!("http://rocket.rs/", index, "?bar#baz") => "http://rocket.rs/?bar#baz",
+        uri!("http://rocket.rs/", index, "?bar#baz") => "http://rocket.rs?bar#baz",
         uri!("http://", index, "?foo") => "http://?foo",
         uri!("http://rocket.rs", simple3(id = 100), "?foo") => "http://rocket.rs?id=100",
         uri!("http://rocket.rs", simple3(id = 100), "?foo#bar") => "http://rocket.rs?id=100#bar",
-        uri!("http://rocket.rs/", simple3(id = 100), "?foo") => "http://rocket.rs/?id=100",
-        uri!("http://rocket.rs/", simple3(id = 100), "?foo#bar") => "http://rocket.rs/?id=100#bar",
         uri!(_, simple3(id = 100), "?foo#bar") => "/?id=100#bar",
     }
 
     let dyn_origin = uri!("/a/b/c");
     let dyn_origin2 = uri!("/a/b/c?foo-bar");
-    let dyn_origin_slash = uri!("/a/b/c/");
     assert_uri_eq! {
         uri!(dyn_origin.clone(), index) => "/a/b/c",
         uri!(dyn_origin2.clone(), index) => "/a/b/c",
@@ -252,53 +228,29 @@ fn check_route_prefix_suffix() {
         uri!(dyn_origin2.clone(), simple2(100, "hey")) => "/a/b/c/100/hey",
         uri!(dyn_origin.clone(), simple2(id = 23, name = "hey")) => "/a/b/c/23/hey",
         uri!(dyn_origin2.clone(), simple2(id = 23, name = "hey")) => "/a/b/c/23/hey",
-
-        uri!(dyn_origin_slash.clone(), index) => "/a/b/c/",
-        uri!(dyn_origin_slash.clone(), simple3(10)) => "/a/b/c/?id=10",
-        uri!(dyn_origin_slash.clone(), simple(100)) => "/a/b/c/100",
     }
 
     let dyn_absolute = uri!("http://rocket.rs");
-    let dyn_absolute_slash = uri!("http://rocket.rs/");
     assert_uri_eq! {
         uri!(dyn_absolute.clone(), index) => "http://rocket.rs",
-        uri!(dyn_absolute.clone(), simple(100)) => "http://rocket.rs/100",
-        uri!(dyn_absolute.clone(), simple3(123)) => "http://rocket.rs?id=123",
-        uri!(dyn_absolute_slash.clone(), index) => "http://rocket.rs/",
-        uri!(dyn_absolute_slash.clone(), simple(100)) => "http://rocket.rs/100",
-        uri!(dyn_absolute_slash.clone(), simple3(123)) => "http://rocket.rs/?id=123",
         uri!(uri!("http://rocket.rs/a/b"), index) => "http://rocket.rs/a/b",
-        uri!("http://rocket.rs/a/b") => "http://rocket.rs/a/b",
-        uri!(uri!("http://rocket.rs/a/b"), index) => "http://rocket.rs/a/b",
-        uri!("http://rocket.rs/a/b") => "http://rocket.rs/a/b",
     }
 
     let dyn_abs = uri!("http://rocket.rs?foo");
     assert_uri_eq! {
         uri!(_, index, dyn_abs.clone()) => "/?foo",
+        uri!("http://rocket.rs/", index, dyn_abs.clone()) => "http://rocket.rs?foo",
         uri!("http://rocket.rs", index, dyn_abs.clone()) => "http://rocket.rs?foo",
-        uri!("http://rocket.rs/", index, dyn_abs.clone()) => "http://rocket.rs/?foo",
         uri!("http://", index, dyn_abs.clone()) => "http://?foo",
-        uri!(_, simple3(id = 123), dyn_abs) => "/?id=123",
-    }
-
-    let dyn_abs = uri!("http://rocket.rs/?foo");
-    assert_uri_eq! {
-        uri!(_, index, dyn_abs.clone()) => "/?foo",
-        uri!("http://rocket.rs", index, dyn_abs.clone()) => "http://rocket.rs?foo",
-        uri!("http://rocket.rs/", index, dyn_abs.clone()) => "http://rocket.rs/?foo",
-        uri!("http://", index, dyn_abs.clone()) => "http://?foo",
-        uri!("http:///", index, dyn_abs.clone()) => "http:///?foo",
         uri!(_, simple3(id = 123), dyn_abs) => "/?id=123",
     }
 
     let dyn_ref = uri!("?foo#bar");
     assert_uri_eq! {
         uri!(_, index, dyn_ref.clone()) => "/?foo#bar",
+        uri!("http://rocket.rs/", index, dyn_ref.clone()) => "http://rocket.rs?foo#bar",
         uri!("http://rocket.rs", index, dyn_ref.clone()) => "http://rocket.rs?foo#bar",
-        uri!("http://rocket.rs/", index, dyn_ref.clone()) => "http://rocket.rs/?foo#bar",
         uri!("http://", index, dyn_ref.clone()) => "http://?foo#bar",
-        uri!("http:///", index, dyn_ref.clone()) => "http:///?foo#bar",
         uri!(_, simple3(id = 123), dyn_ref) => "/?id=123#bar",
     }
 }
@@ -656,25 +608,6 @@ fn test_json() {
 }
 
 #[test]
-fn test_route_uri_normalization_with_prefix() {
-    #[get("/world")] fn world() {}
-
-    assert_uri_eq! {
-        uri!("/", index()) => "/",
-        uri!("/foo", index()) => "/foo",
-        uri!("/bar/", index()) => "/bar/",
-        uri!("/foo/bar", index()) => "/foo/bar",
-        uri!("/foo/bar/", index()) => "/foo/bar/",
-
-        uri!("/", world()) => "/world",
-        uri!("/foo", world()) => "/foo/world",
-        uri!("/bar/", world()) => "/bar/world",
-        uri!("/foo/bar", world()) => "/foo/bar/world",
-        uri!("/foo/bar/", world()) => "/foo/bar/world",
-    }
-}
-
-#[test]
 fn test_vec_in_query() {
     #[post("/?<v>")]
     fn f(v: Vec<usize>) { }
@@ -707,21 +640,5 @@ fn test_vec_in_query() {
 
         uri!(h(v = bytes.as_slice())) => "/?v=%00%01%02",
         uri!(h(v = &[1, 2, 3][..])) => "/?v=%01%02%03",
-    }
-}
-
-#[test]
-fn test_either() {
-    use rocket::either::{Either, Left, Right};
-
-    #[get("/<_foo>")]
-    fn f(_foo: Either<usize, &str>) { }
-
-    assert_uri_eq! {
-        uri!(f(Left::<usize, &str>(123))) => "/123",
-        uri!(f(_foo = Left::<usize, &str>(710))) => "/710",
-
-        uri!(f(Right::<usize, &str>("hello world"))) => "/hello%20world",
-        uri!(f(_foo = Right::<usize, &str>("bye?"))) => "/bye%3F",
     }
 }

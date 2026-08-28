@@ -159,7 +159,7 @@ fn not_found(request: &Request<'_>) -> content::RawHtml<String> {
 
 /******************************* `Either` Responder ***************************/
 
-use rocket::either::Either;
+use rocket::Either;
 use rocket::response::content::{RawJson, RawMsgPack};
 use rocket::http::uncased::AsUncased;
 

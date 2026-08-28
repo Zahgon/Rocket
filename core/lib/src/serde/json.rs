@@ -9,7 +9,7 @@
 //!
 //! ```toml
 //! [dependencies.rocket]
-//! version = "0.6.0-dev"
+//! version = "0.5.1"
 //! features = ["json"]
 //! ```
 //!
@@ -219,7 +219,7 @@ impl<'r, T: Serialize> Responder<'r, 'static> for Json<T> {
     fn respond_to(self, req: &'r Request<'_>) -> response::Result<'static> {
         let string = serde_json::to_string(&self.0)
             .map_err(|e| {
-                error!("JSON serialize failure: {}", e);
+                error_!("JSON failed to serialize: {:?}", e);
                 Status::InternalServerError
             })?;
 

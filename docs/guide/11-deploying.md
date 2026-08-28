@@ -49,7 +49,7 @@ For any deployment, it's important to keep in mind:
      #[launch]
      fn rocket() -> _ {
          rocket::build()
-             .mount("/", FileServer::new("./static"))
+             .mount("/", FileServer::from("./static"))
              .attach(Template::fairing())
      }
      ```
@@ -92,10 +92,10 @@ The following section addresses these concerns and more for common deployment
 scenarios.
 
 [DDoS mitigation]: @github/issues/1405
-[graceful shutdown]: @api/master/rocket/shutdown/struct.ShutdownConfig.html
-[`Shutdown`]: @api/master/rocket/struct.Shutdown.html
-[shutdown fairings]: @api/master/rocket/fairing/trait.Fairing.html#shutdown
-[triggers]: @api/master/rocket/shutdown/struct.ShutdownConfig.html#triggers
+[graceful shutdown]: @api/v0.5/rocket/shutdown/struct.ShutdownConfig.html
+[`Shutdown`]: @api/v0.5/rocket/struct.Shutdown.html
+[shutdown fairings]: @api/v0.5/rocket/fairing/trait.Fairing.html#shutdown
+[triggers]: @api/v0.5/rocket/shutdown/struct.ShutdownConfig.html#triggers
 
 ## Common Scenarios
 
@@ -217,8 +217,8 @@ Our recommendation for a direct self-managed deployment is to:
     be explicitly configured via [`proxy_proto_header`] for Rocket to consider.
 
 [`cargo-zigbuild`]: https://github.com/rust-cross/cargo-zigbuild
-[`ip_header`]: @api/master/rocket/config/struct.Config.html#structfield.ip_header
-[`proxy_proto_header`]: @api/master/rocket/config/struct.Config.html#structfield.proxy_proto_header
+[`ip_header`]: @api/v0.5/rocket/config/struct.Config.html#structfield.ip_header
+[`proxy_proto_header`]: @api/v0.5/rocket/config/struct.Config.html#structfield.proxy_proto_header
 
 ### Containerization
 
@@ -262,9 +262,9 @@ WORKDIR /app
 COPY --from=build /build/main ./
 
 ## copy runtime assets which may or may not exist
-COPY --from=build /build/Rocket.tom[l] ./
-COPY --from=build /build/stati[c] ./static/
-COPY --from=build /build/template[s] ./templates/
+COPY --from=build /build/Rocket.tom[l] ./static
+COPY --from=build /build/stati[c] ./static
+COPY --from=build /build/template[s] ./templates
 
 ## ensure the container listens globally on port 8080
 ENV ROCKET_ADDRESS=0.0.0.0

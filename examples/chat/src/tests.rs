@@ -1,7 +1,7 @@
 use std::ops::Range;
 
-use rand::{rng, Rng};
-use rand::distr::Alphanumeric;
+use rand::{thread_rng, Rng};
+use rand::distributions::Alphanumeric;
 
 use rocket::http::{ContentType, Status};
 use rocket::http::uri::fmt::{UriDisplay, Query};
@@ -22,9 +22,9 @@ async fn send_message<'c>(client: &'c Client, message: &Message) -> LocalRespons
 }
 
 fn gen_string(len: Range<usize>) -> String {
-    rng()
+    thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(rng().random_range(len))
+        .take(thread_rng().gen_range(len))
         .map(char::from)
         .collect()
 }
@@ -42,7 +42,7 @@ async fn messages() {
 
     // Generate somewhere between 75 and 100 messages.
     let mut test_messages = vec![];
-    for _ in 0..rng().random_range(75..100) {
+    for _ in 0..thread_rng().gen_range(75..100) {
         test_messages.push(Message {
             room: gen_string(10..30),
             username: gen_string(10..20),
@@ -77,7 +77,7 @@ async fn messages() {
             }
 
             let data: Message = json::from_str(&line[5..]).expect("message JSON");
-            if data == shutdown_message {
+            if &data == &shutdown_message {
                 // Test shutdown listening: this should end the stream.
                 client.rocket().shutdown().notify();
                 continue;
@@ -98,7 +98,7 @@ async fn messages() {
 async fn bad_messages() {
     // Generate a bunch of bad messages.
     let mut bad_messages = vec![];
-    for _ in 0..rng().random_range(75..100) {
+    for _ in 0..thread_rng().gen_range(75..100) {
         bad_messages.push(Message {
             room: gen_string(30..40),
             username: gen_string(20..30),

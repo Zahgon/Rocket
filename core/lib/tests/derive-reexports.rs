@@ -1,3 +1,5 @@
+use rocket;
+
 use rocket::{get, routes};
 use rocket::form::{FromForm, FromFormField};
 use rocket::response::Responder;

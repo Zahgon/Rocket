@@ -18,16 +18,14 @@ address = "127.0.0.1"
 port = 8000
 workers = 1
 keep_alive = 0
-log_level = "info"
-log_format = "pretty"
+log_level = "normal"
 
 [release]
 address = "127.0.0.1"
 port = 8000
 workers = 12
 keep_alive = 5
-log_level = "error"
-log_format = "compact"
+log_level = "critical"
 # NOTE: Don't (!) use this key! Generate your own and keep it private!
 #       e.g. via `head -c64 /dev/urandom | base64`
 secret_key = "hPRYyVRiMyxpw5sBB1XeCMN1kFsDCqKvBi2QJxBVHQk="

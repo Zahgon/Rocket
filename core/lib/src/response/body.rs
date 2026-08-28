@@ -81,7 +81,7 @@ type SizedBody<'r> = Pin<Box<dyn AsyncReadSeek + Send + 'r>>;
 type UnsizedBody<'r> = Pin<Box<dyn AsyncRead + Send + 'r>>;
 
 enum Inner<'r> {
-    /// A body that can be `seek()`ed to determine its size.
+    /// A body that can be seeked to determine it's size.
     Seekable(SizedBody<'r>),
     /// A body that has no known size.
     Unsized(UnsizedBody<'r>),
@@ -106,14 +106,6 @@ impl<'r> Body<'r> {
     ///
     /// The present value is `4096`.
     pub const DEFAULT_MAX_CHUNK: usize = 4096;
-
-    pub(crate) fn unsized_none() -> Self {
-        Body {
-            size: None,
-            inner: Inner::None,
-            max_chunk: Body::DEFAULT_MAX_CHUNK,
-        }
-    }
 
     pub(crate) fn with_sized<T>(body: T, preset_size: Option<usize>) -> Self
         where T: AsyncReadSeek + Send + 'r
@@ -360,7 +352,7 @@ impl<'r> Body<'r> {
         let n = match self.read_to_end(&mut vec).await {
             Ok(n) => n,
             Err(e) => {
-                error!("i/o error reading body: {:?}", e);
+                error_!("Error reading body: {:?}", e);
                 return Err(e);
             }
         };
@@ -397,7 +389,7 @@ impl<'r> Body<'r> {
     /// ```
     pub async fn to_string(&mut self) -> io::Result<String> {
         String::from_utf8(self.to_bytes().await?).map_err(|e| {
-            error!("invalid body UTF-8: {}", e);
+            error_!("Body is invalid UTF-8: {}", e);
             io::Error::new(io::ErrorKind::InvalidData, e)
         })
     }

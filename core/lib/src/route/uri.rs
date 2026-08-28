@@ -1,6 +1,7 @@
 use std::fmt;
+use std::borrow::Cow;
 
-use crate::http::uri::{self, Origin, Path};
+use crate::http::uri::{self, Origin};
 use crate::http::ext::IntoOwned;
 use crate::form::ValueField;
 use crate::route::Segment;
@@ -52,14 +53,16 @@ use crate::route::Segment;
 ///
 /// [`Rocket::mount()`]: crate::Rocket::mount()
 /// [`Route::new()`]: crate::Route::new()
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RouteUri<'a> {
+    /// The source string for this URI.
+    source: Cow<'a, str>,
     /// The mount point.
-    pub(crate) base: Origin<'a>,
+    pub base: Origin<'a>,
     /// The URI _without_ the `base` mount point.
-    pub(crate) unmounted_origin: Origin<'a>,
+    pub unmounted_origin: Origin<'a>,
     /// The URI _with_ the base mount point. This is the canonical route URI.
-    pub(crate) uri: Origin<'a>,
+    pub origin: Origin<'a>,
     /// Cached metadata about this URI.
     pub(crate) metadata: Metadata,
 }
@@ -76,10 +79,10 @@ pub(crate) enum Color {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Metadata {
-    /// Segments in the route URI, including base.
-    pub uri_segments: Vec<Segment>,
-    /// Numbers of segments in `uri_segments` that belong to the base.
-    pub base_len: usize,
+    /// Segments in the base.
+    pub base_segs: Vec<Segment>,
+    /// Segments in the path, including base.
+    pub path_segs: Vec<Segment>,
     /// `(name, value)` of the query segments that are static.
     pub static_query_fields: Vec<(String, String)>,
     /// The "color" of the route path.
@@ -87,7 +90,7 @@ pub(crate) struct Metadata {
     /// The "color" of the route query, if there is query.
     pub query_color: Option<Color>,
     /// Whether the path has a `<trailing..>` parameter.
-    pub dynamic_trail: bool,
+    pub trailing_path: bool,
 }
 
 type Result<T, E = uri::Error<'static>> = std::result::Result<T, E>;
@@ -95,19 +98,9 @@ type Result<T, E = uri::Error<'static>> = std::result::Result<T, E>;
 impl<'a> RouteUri<'a> {
     /// Create a new `RouteUri`.
     ///
-    /// Panics if  `base` or `uri` cannot be parsed as `Origin`s.
-    #[track_caller]
-    pub(crate) fn new(base: &str, uri: &str) -> RouteUri<'static> {
-        Self::try_new(base, uri).expect("expected valid route URIs")
-    }
-
-    /// Creates a new `RouteUri` from a `base` mount point and a route `uri`.
-    ///
     /// This is a fallible variant of [`RouteUri::new`] which returns an `Err`
     /// if `base` or `uri` cannot be parsed as [`Origin`]s.
-    /// INTERNAL!
-    #[doc(hidden)]
-    pub fn try_new(base: &str, uri: &str) -> Result<RouteUri<'static>> {
+    pub(crate) fn try_new(base: &str, uri: &str) -> Result<RouteUri<'static>> {
         let mut base = Origin::parse(base)
             .map_err(|e| e.into_owned())?
             .into_normalized()
@@ -115,35 +108,31 @@ impl<'a> RouteUri<'a> {
 
         base.clear_query();
 
-        let origin = Origin::parse_route(uri)
+        let unmounted_origin = Origin::parse_route(uri)
             .map_err(|e| e.into_owned())?
             .into_normalized()
             .into_owned();
 
-        // Distinguish for routes `/` with bases of `/foo/` and `/foo`. The
-        // latter base, without a trailing slash, should combine as `/foo`.
-        let route_uri = match origin.path().as_str() {
-            "/" if !base.has_trailing_slash() => match origin.query() {
-                Some(query) => format!("{}?{}", base, query),
-                None => base.to_string(),
-            }
-            _ => format!("{}{}", base, origin),
-        };
-
-        let uri = Origin::parse_route(&route_uri)
+        let origin = Origin::parse_route(&format!("{}/{}", base, unmounted_origin))
             .map_err(|e| e.into_owned())?
             .into_normalized()
             .into_owned();
 
-        let metadata = Metadata::from(&base, &uri);
+        let source = origin.to_string().into();
+        let metadata = Metadata::from(&base, &origin);
 
-        Ok(RouteUri { base, unmounted_origin: origin, uri, metadata })
+        Ok(RouteUri { source, base, unmounted_origin, origin, metadata })
     }
 
-    /// Returns the complete route URI.
+    /// Create a new `RouteUri`.
     ///
-    /// **Note:** `RouteURI` derefs to the `Origin` returned by this method, so
-    /// this method should rarely be called directly.
+    /// Panics if  `base` or `uri` cannot be parsed as `Origin`s.
+    #[track_caller]
+    pub(crate) fn new(base: &str, uri: &str) -> RouteUri<'static> {
+        Self::try_new(base, uri).expect("Expected valid URIs")
+    }
+
+    /// The path of the base mount point of this route URI as an `&str`.
     ///
     /// # Example
     ///
@@ -152,43 +141,17 @@ impl<'a> RouteUri<'a> {
     /// use rocket::http::Method;
     /// # use rocket::route::dummy_handler as handler;
     ///
-    /// let route = Route::new(Method::Get, "/foo/bar?a=1", handler);
-    ///
-    /// // Use `inner()` directly:
-    /// assert_eq!(route.uri.inner().query().unwrap(), "a=1");
-    ///
-    /// // Use the deref implementation. This is preferred:
-    /// assert_eq!(route.uri.query().unwrap(), "a=1");
-    /// ```
-    pub fn inner(&self) -> &Origin<'a> {
-        &self.uri
-    }
-
-    /// The base mount point of this route URI.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rocket::Route;
-    /// use rocket::http::Method;
-    /// # use rocket::route::dummy_handler as handler;
-    /// # use rocket::uri;
-    ///
-    /// let route = Route::new(Method::Get, "/foo/bar?a=1", handler);
-    /// assert_eq!(route.uri.base(), "/");
-    ///
-    /// let route = route.rebase(uri!("/boo"));
-    /// assert_eq!(route.uri.base(), "/boo");
-    ///
-    /// let route = route.rebase(uri!("/foo"));
-    /// assert_eq!(route.uri.base(), "/foo/boo");
+    /// let index = Route::new(Method::Get, "/foo/bar?a=1", handler);
+    /// assert_eq!(index.uri.base(), "/");
+    /// let index = index.map_base(|base| format!("{}{}", "/boo", base)).unwrap();
+    /// assert_eq!(index.uri.base(), "/boo");
     /// ```
     #[inline(always)]
-    pub fn base(&self) -> Path<'_> {
-        self.base.path()
+    pub fn base(&self) -> &str {
+        self.base.path().as_str()
     }
 
-    /// The route URI _without_ the base mount point.
+    /// The path part of this route URI as an `&str`.
     ///
     /// # Example
     ///
@@ -196,18 +159,61 @@ impl<'a> RouteUri<'a> {
     /// use rocket::Route;
     /// use rocket::http::Method;
     /// # use rocket::route::dummy_handler as handler;
-    /// # use rocket::uri;
     ///
-    /// let route = Route::new(Method::Get, "/foo/bar?a=1", handler);
-    /// let route = route.rebase(uri!("/boo"));
-    ///
-    /// assert_eq!(route.uri, "/boo/foo/bar?a=1");
-    /// assert_eq!(route.uri.base(), "/boo");
-    /// assert_eq!(route.uri.unmounted(), "/foo/bar?a=1");
+    /// let index = Route::new(Method::Get, "/foo/bar?a=1", handler);
+    /// assert_eq!(index.uri.path(), "/foo/bar");
+    /// let index = index.map_base(|base| format!("{}{}", "/boo", base)).unwrap();
+    /// assert_eq!(index.uri.path(), "/boo/foo/bar");
     /// ```
     #[inline(always)]
-    pub fn unmounted(&self) -> &Origin<'a> {
-        &self.unmounted_origin
+    pub fn path(&self) -> &str {
+        self.origin.path().as_str()
+    }
+
+    /// The query part of this route URI, if there is one.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rocket::Route;
+    /// use rocket::http::Method;
+    /// # use rocket::route::dummy_handler as handler;
+    ///
+    /// let index = Route::new(Method::Get, "/foo/bar", handler);
+    /// assert!(index.uri.query().is_none());
+    ///
+    /// // Normalization clears the empty '?'.
+    /// let index = Route::new(Method::Get, "/foo/bar?", handler);
+    /// assert!(index.uri.query().is_none());
+    ///
+    /// let index = Route::new(Method::Get, "/foo/bar?a=1", handler);
+    /// assert_eq!(index.uri.query().unwrap(), "a=1");
+    ///
+    /// let index = index.map_base(|base| format!("{}{}", "/boo", base)).unwrap();
+    /// assert_eq!(index.uri.query().unwrap(), "a=1");
+    /// ```
+    #[inline(always)]
+    pub fn query(&self) -> Option<&str> {
+        self.origin.query().map(|q| q.as_str())
+    }
+
+    /// The full URI as an `&str`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rocket::Route;
+    /// use rocket::http::Method;
+    /// # use rocket::route::dummy_handler as handler;
+    ///
+    /// let index = Route::new(Method::Get, "/foo/bar?a=1", handler);
+    /// assert_eq!(index.uri.as_str(), "/foo/bar?a=1");
+    /// let index = index.map_base(|base| format!("{}{}", "/boo", base)).unwrap();
+    /// assert_eq!(index.uri.as_str(), "/boo/foo/bar?a=1");
+    /// ```
+    #[inline(always)]
+    pub fn as_str(&self) -> &str {
+        &self.source
     }
 
     /// Get the default rank of a route with this URI.
@@ -241,13 +247,16 @@ impl<'a> RouteUri<'a> {
 }
 
 impl Metadata {
-    fn from(base: &Origin<'_>, uri: &Origin<'_>) -> Self {
-        let uri_segments = uri.path()
-            .raw_segments()
+    fn from(base: &Origin<'_>, origin: &Origin<'_>) -> Self {
+        let base_segs = base.path().raw_segments()
             .map(Segment::from)
             .collect::<Vec<_>>();
 
-        let query_segs = uri.query()
+        let path_segs = origin.path().raw_segments()
+            .map(Segment::from)
+            .collect::<Vec<_>>();
+
+        let query_segs = origin.query()
             .map(|q| q.raw_segments().map(Segment::from).collect::<Vec<_>>())
             .unwrap_or_default();
 
@@ -256,8 +265,8 @@ impl Metadata {
             .map(|f| (f.name.source().to_string(), f.value.to_string()))
             .collect();
 
-        let static_path = uri_segments.iter().all(|s| !s.dynamic);
-        let wild_path = !uri_segments.is_empty() && uri_segments.iter().all(|s| s.dynamic);
+        let static_path = path_segs.iter().all(|s| !s.dynamic);
+        let wild_path = !path_segs.is_empty() && path_segs.iter().all(|s| s.dynamic);
         let path_color = match (static_path, wild_path) {
             (true, _) => Color::Static,
             (_, true) => Color::Wild,
@@ -274,13 +283,11 @@ impl Metadata {
             }
         });
 
-        let dynamic_trail = uri_segments.last().map_or(false, |p| p.dynamic_trail);
-        let segments = base.path().segments();
-        let num_empty = segments.clone().filter(|s| s.is_empty()).count();
-        let base_len = segments.num() - num_empty;
+        let trailing_path = path_segs.last().map_or(false, |p| p.trailing);
 
         Metadata {
-            uri_segments, base_len, static_query_fields, path_color, query_color, dynamic_trail
+            base_segs, path_segs, static_query_fields, path_color, query_color,
+            trailing_path,
         }
     }
 }
@@ -289,67 +296,35 @@ impl<'a> std::ops::Deref for RouteUri<'a> {
     type Target = Origin<'a>;
 
     fn deref(&self) -> &Self::Target {
-        self.inner()
+        &self.origin
     }
 }
 
 impl fmt::Display for RouteUri<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.uri.fmt(f)
+        self.origin.fmt(f)
+    }
+}
+
+impl fmt::Debug for RouteUri<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RouteUri")
+            .field("base", &self.base)
+            .field("unmounted_origin", &self.unmounted_origin)
+            .field("origin", &self.origin)
+            .field("metadata", &self.metadata)
+            .finish()
     }
 }
 
 impl<'a, 'b> PartialEq<Origin<'b>> for RouteUri<'a> {
-    fn eq(&self, other: &Origin<'b>) -> bool { self.inner() == other }
+    fn eq(&self, other: &Origin<'b>) -> bool { &self.origin == other }
 }
 
 impl PartialEq<str> for RouteUri<'_> {
-    fn eq(&self, other: &str) -> bool { self.inner() == other }
+    fn eq(&self, other: &str) -> bool { self.as_str() == other }
 }
 
 impl PartialEq<&str> for RouteUri<'_> {
-    fn eq(&self, other: &&str) -> bool { self.inner() == *other }
-}
-
-#[cfg(test)]
-mod tests {
-    macro_rules! assert_uri_equality {
-        ($base:expr, $path:expr => $ebase:expr, $epath:expr, $efull:expr) => {
-            let uri = super::RouteUri::new($base, $path);
-            assert_eq!(uri, $efull, "complete URI mismatch. expected {}, got {}", $efull, uri);
-            assert_eq!(uri.base(), $ebase, "expected base {}, got {}", $ebase, uri.base());
-            assert_eq!(uri.unmounted(), $epath, "expected unmounted {}, got {}", $epath,
-                uri.unmounted());
-        };
-    }
-
-    #[test]
-    fn test_route_uri_composition() {
-        assert_uri_equality!("/", "/" => "/", "/", "/");
-        assert_uri_equality!("/", "/foo" => "/", "/foo", "/foo");
-        assert_uri_equality!("/", "/foo/bar" => "/", "/foo/bar", "/foo/bar");
-        assert_uri_equality!("/", "/foo/" => "/", "/foo/", "/foo/");
-        assert_uri_equality!("/", "/foo/bar/" => "/", "/foo/bar/", "/foo/bar/");
-
-        assert_uri_equality!("/foo", "/" => "/foo", "/", "/foo");
-        assert_uri_equality!("/foo", "/bar" => "/foo", "/bar", "/foo/bar");
-        assert_uri_equality!("/foo", "/bar/" => "/foo", "/bar/", "/foo/bar/");
-        assert_uri_equality!("/foo", "/?baz" => "/foo", "/?baz", "/foo?baz");
-        assert_uri_equality!("/foo", "/bar?baz" => "/foo", "/bar?baz", "/foo/bar?baz");
-        assert_uri_equality!("/foo", "/bar/?baz" => "/foo", "/bar/?baz", "/foo/bar/?baz");
-
-        assert_uri_equality!("/foo/", "/" => "/foo/", "/", "/foo/");
-        assert_uri_equality!("/foo/", "/bar" => "/foo/", "/bar", "/foo/bar");
-        assert_uri_equality!("/foo/", "/bar/" => "/foo/", "/bar/", "/foo/bar/");
-        assert_uri_equality!("/foo/", "/?baz" => "/foo/", "/?baz", "/foo/?baz");
-        assert_uri_equality!("/foo/", "/bar?baz" => "/foo/", "/bar?baz", "/foo/bar?baz");
-        assert_uri_equality!("/foo/", "/bar/?baz" => "/foo/", "/bar/?baz", "/foo/bar/?baz");
-
-        assert_uri_equality!("/foo?baz", "/" => "/foo", "/", "/foo");
-        assert_uri_equality!("/foo?baz", "/bar" => "/foo", "/bar", "/foo/bar");
-        assert_uri_equality!("/foo?baz", "/bar/" => "/foo", "/bar/", "/foo/bar/");
-        assert_uri_equality!("/foo/?baz", "/" => "/foo/", "/", "/foo/");
-        assert_uri_equality!("/foo/?baz", "/bar" => "/foo/", "/bar", "/foo/bar");
-        assert_uri_equality!("/foo/?baz", "/bar/" => "/foo/", "/bar/", "/foo/bar/");
-    }
+    fn eq(&self, other: &&str) -> bool { self.as_str() == *other }
 }

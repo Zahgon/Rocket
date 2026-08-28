@@ -51,19 +51,19 @@ use crate::parse::{Extent, IndexedStr};
 /// `Reference` is both `Serialize` and `Deserialize`:
 ///
 /// ```rust
-/// # #[cfg(feature = "serde")] mod serde_impl {
-/// # use serde as serde;
+/// # #[cfg(feature = "serde")] mod serde {
+/// # use serde_ as serde;
 /// use serde::{Serialize, Deserialize};
 /// use rocket::http::uri::Reference;
 ///
 /// #[derive(Deserialize, Serialize)]
-/// # #[serde(crate = "serde")]
+/// # #[serde(crate = "serde_")]
 /// struct UriOwned {
 ///     uri: Reference<'static>,
 /// }
 ///
 /// #[derive(Deserialize, Serialize)]
-/// # #[serde(crate = "serde")]
+/// # #[serde(crate = "serde_")]
 /// struct UriBorrowed<'a> {
 ///     uri: Reference<'a>,
 /// }
@@ -264,17 +264,15 @@ impl<'a> Reference<'a> {
     ///
     /// ```rust
     /// # #[macro_use] extern crate rocket;
-    /// let uri = uri!("http://rocket.rs/guide");
-    /// assert!(uri.query().is_none());
-    ///
-    /// let uri = uri!("http://rocket.rs/guide?");
-    /// assert_eq!(uri.query().unwrap(), "");
-    ///
     /// let uri = uri!("http://rocket.rs/guide?foo#bar");
     /// assert_eq!(uri.query().unwrap(), "foo");
     ///
     /// let uri = uri!("http://rocket.rs/guide?q=bar");
     /// assert_eq!(uri.query().unwrap(), "q=bar");
+    ///
+    /// // Empty query parts are normalized away by `uri!()`.
+    /// let uri = uri!("http://rocket.rs/guide?#bar");
+    /// assert!(uri.query().is_none());
     /// ```
     #[inline(always)]
     pub fn query(&self) -> Option<Query<'_>> {
@@ -318,23 +316,23 @@ impl<'a> Reference<'a> {
     /// assert!(Reference::parse("http://foo.rs/foo/bar").unwrap().is_normalized());
     /// assert!(Reference::parse("foo:bar#baz").unwrap().is_normalized());
     /// assert!(Reference::parse("http://rocket.rs#foo").unwrap().is_normalized());
-    /// assert!(Reference::parse("http://?").unwrap().is_normalized());
-    /// assert!(Reference::parse("git://rocket.rs/").unwrap().is_normalized());
-    /// assert!(Reference::parse("http://rocket.rs?#foo").unwrap().is_normalized());
-    /// assert!(Reference::parse("http://rocket.rs#foo").unwrap().is_normalized());
     ///
+    /// assert!(!Reference::parse("http://?").unwrap().is_normalized());
+    /// assert!(!Reference::parse("git://rocket.rs/").unwrap().is_normalized());
     /// assert!(!Reference::parse("http:/foo//bar").unwrap().is_normalized());
     /// assert!(!Reference::parse("foo:bar?baz&&bop#c").unwrap().is_normalized());
+    /// assert!(!Reference::parse("http://rocket.rs?#foo").unwrap().is_normalized());
     ///
     /// // Recall that `uri!()` normalizes static input.
-    /// assert!(uri!("http:/foo//bar").is_normalized());
-    /// assert!(uri!("foo:bar?baz&&bop#c").is_normalized());
+    /// assert!(uri!("http://rocket.rs#foo").is_normalized());
     /// assert!(uri!("http://rocket.rs///foo////bar#cat").is_normalized());
     /// ```
     pub fn is_normalized(&self) -> bool {
         let normalized_query = self.query().map_or(true, |q| q.is_normalized());
         if self.authority().is_some() && !self.path().is_empty() {
-            self.path().is_normalized(true) && normalized_query
+            self.path().is_normalized(true)
+                && self.path() != "/"
+                && normalized_query
         } else {
             self.path().is_normalized(false) && normalized_query
         }
@@ -349,6 +347,8 @@ impl<'a> Reference<'a> {
     /// use rocket::http::uri::Reference;
     ///
     /// let mut uri = Reference::parse("git://rocket.rs/").unwrap();
+    /// assert!(!uri.is_normalized());
+    /// uri.normalize();
     /// assert!(uri.is_normalized());
     ///
     /// let mut uri = Reference::parse("http:/foo//bar?baz&&#cat").unwrap();
@@ -363,16 +363,18 @@ impl<'a> Reference<'a> {
     /// ```
     pub fn normalize(&mut self) {
         if self.authority().is_some() && !self.path().is_empty() {
-            if !self.path().is_normalized(true) {
-                self.path = self.path().to_normalized(true, true);
+            if self.path() == "/" {
+                self.set_path("");
+            } else if !self.path().is_normalized(true) {
+                self.path = self.path().to_normalized(true);
             }
-        } else if !self.path().is_normalized(false) {
-            self.path = self.path().to_normalized(false, true);
+        } else {
+            self.path = self.path().to_normalized(false);
         }
 
         if let Some(query) = self.query() {
             if !query.is_normalized() {
-                self.query = Some(query.to_normalized());
+                self.query = query.to_normalized();
             }
         }
     }
@@ -385,7 +387,7 @@ impl<'a> Reference<'a> {
     /// use rocket::http::uri::Reference;
     ///
     /// let mut uri = Reference::parse("git://rocket.rs/").unwrap();
-    /// assert!(uri.is_normalized());
+    /// assert!(!uri.is_normalized());
     /// assert!(uri.into_normalized().is_normalized());
     ///
     /// let mut uri = Reference::parse("http:/foo//bar?baz&&#cat").unwrap();
@@ -401,7 +403,6 @@ impl<'a> Reference<'a> {
         self
     }
 
-    #[allow(unused)]
     pub(crate) fn set_path<P>(&mut self, path: P)
         where P: Into<Cow<'a, str>>
     {

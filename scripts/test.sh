@@ -127,16 +127,13 @@ function test_contrib() {
 
 function test_core() {
   FEATURES=(
-    tokio-macros
-    http2
-    http3-preview
     secrets
     tls
     mtls
+    http2
     json
     msgpack
     uuid
-    trace
   )
 
   echo ":: Building and checking core [no features]..."
@@ -169,18 +166,9 @@ function test_default() {
   indir "${BENCHMARKS_ROOT}" $CARGO update
   indir "${BENCHMARKS_ROOT}" $CARGO check --benches --all-features $@
 
-  case "$OSTYPE" in
-      darwin* | linux*)
-          echo ":: Checking testbench..."
-          indir "${TESTBENCH_ROOT}" $CARGO update
-          indir "${TESTBENCH_ROOT}" $CARGO check $@
-
-          echo ":: Checking fuzzers..."
-          indir "${FUZZ_ROOT}" $CARGO update
-          indir "${FUZZ_ROOT}" $CARGO check --all --all-features $@
-          ;;
-      *) echo ":: Skipping testbench, fuzzers [$OSTYPE]" ;;
-  esac
+  echo ":: Checking fuzzers..."
+  indir "${FUZZ_ROOT}" $CARGO update
+  indir "${FUZZ_ROOT}" $CARGO check --all --all-features $@
 }
 
 function test_ui() {
@@ -194,48 +182,14 @@ function run_benchmarks() {
   indir "${BENCHMARKS_ROOT}" $CARGO bench $@
 }
 
-function run_testbench() {
-  echo ":: Running testbench..."
-  indir "${TESTBENCH_ROOT}" $CARGO update
-  indir "${TESTBENCH_ROOT}" $CARGO run $@
-}
-
-# The kind of test we'll be running.
-TEST_KIND="default"
-KINDS=("default" "all" "core" "contrib" "examples" "benchmarks" "testbench" "ui")
-
-function print_help() {
-  echo "USAGE:"
-  echo "  $0 [+<TOOLCHAIN>] [--help|-h] [--<TEST>]"
-  echo ""
-  echo "OPTIONS:"
-  echo "  +<TOOLCHAIN>   Forwarded to Cargo to select toolchain."
-  echo "  --help, -h     Print this help message and exit."
-  echo "  --<TEST>       Run the specified test suite."
-  echo "                 (Run without --<TEST> to run default tests.)"
-
-  echo ""
-  echo "AVAILABLE <TEST> OPTIONS:"
-  for kind in "${KINDS[@]}"; do
-    echo "  ${kind}"
-  done
-
-  echo ""
-  echo "EXAMPLES:"
-  echo "  $0                     # Run default tests on current toolchain."
-  echo "  $0 +stable --all       # Run all tests on stable toolchain."
-  echo "  $0 --ui                # Run UI tests on current toolchain."
-}
-
 if [[ $1 == +* ]]; then
   CARGO="$CARGO $1"
   shift
 fi
 
-if [[ $1 == "--help" ]] || [[ $1 == "-h" ]]; then
-  print_help
-  exit 0
-fi
+# The kind of test we'll be running.
+TEST_KIND="default"
+KINDS=("contrib" "benchmarks" "core" "examples" "default" "ui" "all")
 
 if [[ " ${KINDS[@]} " =~ " ${1#"--"} " ]]; then
   TEST_KIND=${1#"--"}
@@ -270,14 +224,12 @@ case $TEST_KIND in
   examples) test_examples $@ ;;
   default) test_default $@ ;;
   benchmarks) run_benchmarks $@ ;;
-  testbench) run_testbench $@ ;;
   ui) test_ui $@ ;;
   all)
     test_default $@ & default=$!
     test_examples $@ & examples=$!
     test_core $@ & core=$!
     test_contrib $@ & contrib=$!
-    run_testbench $@ & testbench=$!
     test_ui $@ & ui=$!
 
     failures=()
@@ -285,7 +237,6 @@ case $TEST_KIND in
     if ! wait $examples ; then failures+=("EXAMPLES"); fi
     if ! wait $core ; then failures+=("CORE"); fi
     if ! wait $contrib ; then failures+=("CONTRIB"); fi
-    if ! wait $testbench ; then failures+=("TESTBENCH"); fi
     if ! wait $ui ; then failures+=("UI"); fi
 
     if [ ${#failures[@]} -ne 0 ]; then

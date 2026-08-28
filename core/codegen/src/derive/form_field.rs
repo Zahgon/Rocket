@@ -335,7 +335,7 @@ impl VisitMut for ValidationMutator<'_> {
 
                 *i = expr;
             }
-        } else if let Some(expr) = inner_field(i) {
+        } else if let Some(expr) = inner_field(&i) {
             *i = expr;
         }
 
@@ -343,7 +343,7 @@ impl VisitMut for ValidationMutator<'_> {
     }
 }
 
-pub fn validators(field: Field<'_>) -> Result<impl Iterator<Item = syn::Expr> + '_> {
+pub fn validators<'v>(field: Field<'v>) -> Result<impl Iterator<Item = syn::Expr> + 'v> {
     Ok(FieldAttr::from_attrs(FieldAttr::NAME, &field.attrs)?
         .into_iter()
         .chain(FieldAttr::from_attrs(FieldAttr::NAME, field.parent.attrs())?)
@@ -404,7 +404,7 @@ fn default_expr(expr: &syn::Expr) -> TokenStream {
     }
 }
 
-pub fn default(field: Field<'_>) -> Result<Option<TokenStream>> {
+pub fn default<'v>(field: Field<'v>) -> Result<Option<TokenStream>> {
     let field_attrs = FieldAttr::from_attrs(FieldAttr::NAME, &field.attrs)?;
     let parent_attrs = FieldAttr::from_attrs(FieldAttr::NAME, field.parent.attrs())?;
 
@@ -454,12 +454,10 @@ pub fn default(field: Field<'_>) -> Result<Option<TokenStream>> {
     }
 }
 
-type Dup = (usize, Span, Span);
-
 pub fn first_duplicate<K: Spanned, V: PartialEq + Spanned>(
     keys: impl Iterator<Item = K> + Clone,
     values: impl Fn(&K) -> Result<Vec<V>>,
-) -> Result<Option<(Dup, Dup)>> {
+) -> Result<Option<((usize, Span, Span), (usize, Span, Span))>> {
     let (mut all_values, mut key_map) = (vec![], vec![]);
     for key in keys {
         all_values.append(&mut values(&key)?);

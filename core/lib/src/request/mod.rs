@@ -3,7 +3,6 @@
 mod request;
 mod from_param;
 mod from_request;
-mod atomic_method;
 
 #[cfg(test)]
 mod tests;
@@ -12,14 +11,10 @@ pub use self::request::Request;
 pub use self::from_request::{FromRequest, Outcome};
 pub use self::from_param::{FromParam, FromSegments};
 
-#[doc(hidden)]
-pub use rocket_codegen::FromParam;
-
 #[doc(inline)]
 pub use crate::response::flash::FlashMessage;
 
 pub(crate) use self::request::ConnectionMeta;
-pub(crate) use self::atomic_method::AtomicMethod;
 
 crate::export! {
     /// Store and immediately retrieve a vector-like value `$v` (`String` or

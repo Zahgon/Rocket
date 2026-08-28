@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::{fmt, path};
 use std::borrow::Cow;
 
-use either::Either;
 use time::{macros::format_description, format_description::FormatItem};
 
 use crate::RawStr;
@@ -422,17 +421,6 @@ impl<P: Part, T: UriDisplay<P> + ?Sized> UriDisplay<P> for &T {
     }
 }
 
-/// Defers to `T` or `U` in `Either<T, U>`.
-impl<P: Part, T: UriDisplay<P>, U: UriDisplay<P>> UriDisplay<P> for Either<T, U> {
-    #[inline(always)]
-    fn fmt(&self, f: &mut Formatter<'_, P>) -> fmt::Result {
-        match self {
-            Either::Left(t) => UriDisplay::fmt(t, f),
-            Either::Right(u) => UriDisplay::fmt(u, f),
-        }
-    }
-}
-
 /// Defers to the `UriDisplay<P>` implementation for `T`.
 impl<P: Part, T: UriDisplay<P> + ?Sized> UriDisplay<P> for &mut T {
     #[inline(always)]
@@ -517,8 +505,8 @@ impl<K: UriDisplay<Query>, V: UriDisplay<Query>> UriDisplay<Query> for BTreeMap<
     }
 }
 
-#[cfg(feature = "uuid")] impl_with_display!(uuid::Uuid);
-#[cfg(feature = "uuid")] crate::impl_from_uri_param_identity!(uuid::Uuid);
+#[cfg(feature = "uuid")] impl_with_display!(uuid_::Uuid);
+#[cfg(feature = "uuid")] crate::impl_from_uri_param_identity!(uuid_::Uuid);
 
 // And finally, the `Ignorable` trait, which has sugar of `_` in the `uri!`
 // macro, which expands to a typecheck.

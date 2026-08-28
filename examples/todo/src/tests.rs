@@ -1,23 +1,82 @@
 use super::task::Task;
 
-use rand::{self, Rng, distr::Alphanumeric};
+use rand::{Rng, thread_rng, distributions::Alphanumeric};
 
-use rocket::local::asynchronous::Client;
-use rocket::http::{Status, ContentType};
+use reqwest::header::CONTENT_TYPE;
+use reqwest::{Response, StatusCode};
 
 // We use a lock to synchronize between tests so DB operations don't collide.
 // For now. In the future, we'll have a nice way to run each test in a DB
 // transaction so we can regain concurrency.
 static DB_LOCK: parking_lot::Mutex<()> = parking_lot::const_mutex(());
 
+const FORM: &str = "application/x-www-form-urlencoded";
+
+// The framework no longer provides an in-process test client, so the tests
+// drive a real server bound to an ephemeral port. Redirects are not followed,
+// matching the behavior the assertions below were written against.
+struct Client {
+    base: String,
+    http: reqwest::Client,
+}
+
+impl Client {
+    async fn tracked(conn: super::DbConn) -> Client {
+        let app = super::build(conn).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await
+            .expect("failed to bind test server");
+
+        let addr = listener.local_addr().expect("test server address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test server");
+        });
+
+        let http = reqwest::Client::builder()
+            .cookie_store(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("test client");
+
+        Client { base: format!("http://{}", addr), http }
+    }
+
+    fn url(&self, path: impl AsRef<str>) -> String {
+        format!("{}{}", self.base, path.as_ref())
+    }
+
+    async fn get(&self, path: impl AsRef<str>) -> Response {
+        self.http.get(self.url(path)).send().await.expect("GET failed")
+    }
+
+    async fn post(&self, path: impl AsRef<str>, body: impl Into<String>) -> Response {
+        self.http.post(self.url(path))
+            .header(CONTENT_TYPE, FORM)
+            .body(body.into())
+            .send()
+            .await
+            .expect("POST failed")
+    }
+
+    async fn put(&self, path: impl AsRef<str>) -> Response {
+        self.http.put(self.url(path)).send().await.expect("PUT failed")
+    }
+
+    async fn delete(&self, path: impl AsRef<str>) -> Response {
+        self.http.delete(self.url(path)).send().await.expect("DELETE failed")
+    }
+}
+
+fn has_error_cookie(res: &Response) -> bool {
+    res.cookies().any(|c| c.value().contains("error"))
+}
+
 macro_rules! run_test {
     (|$client:ident, $conn:ident| $block:expr) => ({
         let _lock = DB_LOCK.lock();
 
-        rocket::async_test(async move {
-            let $client = Client::tracked(super::rocket()).await.expect("Rocket client");
-            let db = super::DbConn::get_one($client.rocket()).await;
-            let $conn = db.expect("failed to get database connection for testing");
+        tokio::runtime::Runtime::new().expect("test runtime").block_on(async move {
+            let $conn = super::DbConn::new(super::DATABASE_URL);
+            let $client = Client::tracked($conn.clone()).await;
             Task::delete_all(&$conn).await.expect("failed to delete all tasks for testing");
 
             $block
@@ -27,12 +86,13 @@ macro_rules! run_test {
 
 #[test]
 fn test_index() {
-    use rocket::local::blocking::Client;
-
     let _lock = DB_LOCK.lock();
-    let client = Client::tracked(super::rocket()).unwrap();
-    let response = client.get("/").dispatch();
-    assert_eq!(response.status(), Status::Ok);
+
+    tokio::runtime::Runtime::new().expect("test runtime").block_on(async move {
+        let client = Client::tracked(super::DbConn::new(super::DATABASE_URL)).await;
+        let response = client.get("/").await;
+        assert_eq!(response.status(), StatusCode::OK);
+    })
 }
 
 #[test]
@@ -42,11 +102,7 @@ fn test_insertion_deletion() {
         let init_tasks = Task::all(&conn).await.unwrap();
 
         // Issue a request to insert a new task.
-        client.post("/todo")
-            .header(ContentType::Form)
-            .body("description=My+first+task")
-            .dispatch()
-            .await;
+        client.post("/todo", "description=My+first+task").await;
 
         // Ensure we have one more task in the database.
         let new_tasks = Task::all(&conn).await.unwrap();
@@ -54,16 +110,16 @@ fn test_insertion_deletion() {
 
         // Ensure the task is what we expect.
         assert_eq!(new_tasks[0].description, "My first task");
-        assert!(!new_tasks[0].completed);
+        assert_eq!(new_tasks[0].completed, false);
 
         // Issue a request to delete the task.
         let id = new_tasks[0].id.unwrap();
-        client.delete(format!("/todo/{}", id)).dispatch().await;
+        client.delete(format!("/todo/{}", id)).await;
 
         // Ensure it's gone.
         let final_tasks = Task::all(&conn).await.unwrap();
         assert_eq!(final_tasks.len(), init_tasks.len());
-        if !final_tasks.is_empty() {
+        if final_tasks.len() > 0 {
             assert_ne!(final_tasks[0].description, "My first task");
         }
     })
@@ -73,22 +129,18 @@ fn test_insertion_deletion() {
 fn test_toggle() {
     run_test!(|client, conn| {
         // Issue a request to insert a new task; ensure it's not yet completed.
-        client.post("/todo")
-            .header(ContentType::Form)
-            .body("description=test_for_completion")
-            .dispatch()
-            .await;
+        client.post("/todo", "description=test_for_completion").await;
 
         let task = Task::all(&conn).await.unwrap()[0].clone();
-        assert!(!task.completed);
+        assert_eq!(task.completed, false);
 
         // Issue a request to toggle the task; ensure it is completed.
-        client.put(format!("/todo/{}", task.id.unwrap())).dispatch().await;
-        assert!(Task::all(&conn).await.unwrap()[0].completed);
+        client.put(format!("/todo/{}", task.id.unwrap())).await;
+        assert_eq!(Task::all(&conn).await.unwrap()[0].completed, true);
 
         // Issue a request to toggle the task; ensure it's not completed again.
-        client.put(format!("/todo/{}", task.id.unwrap())).dispatch().await;
-        assert!(!Task::all(&conn).await.unwrap()[0].completed);
+        client.put(format!("/todo/{}", task.id.unwrap())).await;
+        assert_eq!(Task::all(&conn).await.unwrap()[0].completed, false);
     })
 }
 
@@ -103,17 +155,13 @@ fn test_many_insertions() {
 
         for i in 0..ITER {
             // Issue a request to insert a new task with a random description.
-            let desc: String = rand::rng()
+            let desc: String = thread_rng()
                 .sample_iter(&Alphanumeric)
                 .take(12)
                 .map(char::from)
                 .collect();
 
-            client.post("/todo")
-                .header(ContentType::Form)
-                .body(format!("description={}", desc))
-                .dispatch()
-                .await;
+            client.post("/todo", format!("description={}", desc)).await;
 
             // Record the description we choose for this iteration.
             descs.insert(0, desc);
@@ -133,43 +181,32 @@ fn test_many_insertions() {
 fn test_bad_form_submissions() {
     run_test!(|client, _conn| {
         // Submit an empty form. We should get a 422 but no flash error.
-        let res = client.post("/todo")
-            .header(ContentType::Form)
-            .dispatch()
-            .await;
+        let res = client.post("/todo", "").await;
 
-        assert!(!res.cookies().iter().any(|c| c.value().contains("error")));
-        assert_eq!(res.status(), Status::UnprocessableEntity);
+        assert!(!has_error_cookie(&res));
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
         // Submit a form with an empty description. We look for 'error' in the
         // cookies which corresponds to flash message being set as an error.
-        let res = client.post("/todo")
-            .header(ContentType::Form)
-            .body("description=")
-            .dispatch()
-            .await;
+        let res = client.post("/todo", "description=").await;
 
         // Check that the flash cookie set and that we're redirected to index.
-        assert!(res.cookies().iter().any(|c| c.value().contains("error")));
-        assert_eq!(res.status(), Status::SeeOther);
+        assert!(has_error_cookie(&res));
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
         // The flash cookie should still be present and the error message should
         // be rendered the index.
-        let body = client.get("/").dispatch().await.into_string().await.unwrap();
+        let body = client.get("/").await.text().await.unwrap();
         assert!(body.contains("Description cannot be empty."));
 
         // Check that the flash is cleared upon another visit to the index.
-        let body = client.get("/").dispatch().await.into_string().await.unwrap();
+        let body = client.get("/").await.text().await.unwrap();
         assert!(!body.contains("Description cannot be empty."));
 
         // Submit a form without a description. Expect a 422 but no flash error.
-        let res = client.post("/todo")
-            .header(ContentType::Form)
-            .body("evil=smile")
-            .dispatch()
-            .await;
+        let res = client.post("/todo", "evil=smile").await;
 
-        assert!(!res.cookies().iter().any(|c| c.value().contains("error")));
-        assert_eq!(res.status(), Status::UnprocessableEntity);
+        assert!(!has_error_cookie(&res));
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     })
 }

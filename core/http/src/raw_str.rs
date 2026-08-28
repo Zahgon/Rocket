@@ -1,13 +1,14 @@
-use std::fmt;
 use std::borrow::{Borrow, Cow};
+use std::convert::AsRef;
 use std::cmp::Ordering;
 use std::str::Utf8Error;
+use std::fmt;
 
 use ref_cast::RefCast;
 use stable_pattern::{Pattern, Searcher, ReverseSearcher, Split, SplitInternal};
+use crate::uri::fmt::{DEFAULT_ENCODE_SET, percent_encode, percent_encode_bytes};
 
 use crate::uncased::UncasedStr;
-use crate::uri::fmt::{DEFAULT_ENCODE_SET, percent_encode, percent_encode_bytes};
 
 /// A reference to a string inside of a raw HTTP message.
 ///
@@ -177,11 +178,6 @@ impl RawStr {
     /// ```
     #[inline(always)]
     pub fn percent_decode(&self) -> Result<Cow<'_, str>, Utf8Error> {
-        // don't let `percent-encoding` return a random empty string
-        if self.is_empty() {
-            return Ok(self.as_str().into());
-        }
-
         self._percent_decode().decode_utf8()
     }
 
@@ -213,11 +209,6 @@ impl RawStr {
     /// ```
     #[inline(always)]
     pub fn percent_decode_lossy(&self) -> Cow<'_, str> {
-        // don't let `percent-encoding` return a random empty string
-        if self.is_empty() {
-            return self.as_str().into();
-        }
-
         self._percent_decode().decode_utf8_lossy()
     }
 
@@ -258,9 +249,19 @@ impl RawStr {
     /// # extern crate rocket;
     /// use rocket::http::RawStr;
     ///
-    /// let raw_str = RawStr::new("Hello/goodbye");
-    /// let encoded = raw_str.percent_encode();
-    /// assert_eq!(encoded.as_str(), "Hello%2Fgoodbye");
+    /// let raw_str = RawStr::new("Hello%21");
+    /// let decoded = raw_str.percent_decode();
+    /// assert_eq!(decoded, Ok("Hello!".into()));
+    /// ```
+    ///
+    /// With an invalid string:
+    ///
+    /// ```rust
+    /// # extern crate rocket;
+    /// use rocket::http::RawStr;
+    ///
+    /// let bad_raw_str = RawStr::new("%FF");
+    /// assert!(bad_raw_str.percent_decode().is_err());
     /// ```
     #[inline(always)]
     pub fn percent_encode(&self) -> Cow<'_, RawStr> {
@@ -278,7 +279,6 @@ impl RawStr {
     /// // Note: Rocket should never hand you a bad `&RawStr`.
     /// let bytes = &[93, 12, 0, 13, 1];
     /// let encoded = RawStr::percent_encode_bytes(&bytes[..]);
-    /// assert_eq!(encoded.as_str(), "]%0C%00%0D%01");
     /// ```
     #[inline(always)]
     pub fn percent_encode_bytes(bytes: &[u8]) -> Cow<'_, RawStr> {
@@ -659,6 +659,7 @@ impl RawStr {
         pat.is_suffix_of(self.as_str())
     }
 
+
     /// Returns the byte index of the first character of this string slice that
     /// matches the pattern.
     ///
@@ -710,9 +711,8 @@ impl RawStr {
     /// assert_eq!(v, ["Mary", "had", "a", "little", "lamb"]);
     /// ```
     #[inline]
-    pub fn split<'a, P>(&'a self, pat: P) -> impl DoubleEndedIterator<Item = &'a RawStr>
-        where P: Pattern<'a>,
-              <P as stable_pattern::Pattern<'a>>::Searcher: stable_pattern::DoubleEndedSearcher<'a>
+    pub fn split<'a, P>(&'a self, pat: P) -> impl Iterator<Item = &'a RawStr>
+        where P: Pattern<'a>
     {
         let split: Split<'_, P> = Split(SplitInternal {
             start: 0,
@@ -838,28 +838,6 @@ impl RawStr {
         suffix.strip_suffix_of(self.as_str()).map(RawStr::new)
     }
 
-    /// Returns a string slice with leading and trailing whitespace removed.
-    ///
-    /// 'Whitespace' is defined according to the terms of the Unicode Derived
-    /// Core Property `White_Space`, which includes newlines.
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// # extern crate rocket;
-    /// use rocket::http::RawStr;
-    ///
-    /// let s = RawStr::new("\n Hello\tworld\t\n");
-    ///
-    /// assert_eq!("Hello\tworld", s.trim());
-    /// ```
-    #[inline]
-    pub fn trim(&self) -> &RawStr {
-        RawStr::new(self.as_str().trim_matches(|c: char| c.is_whitespace()))
-    }
-
     /// Parses this string slice into another type.
     ///
     /// Because `parse` is so general, it can cause problems with type
@@ -892,8 +870,8 @@ impl RawStr {
 }
 
 #[cfg(feature = "serde")]
-mod serde_impl {
-    use serde::{ser, de, Serialize, Deserialize};
+mod serde {
+    use serde_::{ser, de, Serialize, Deserialize};
 
     use super::*;
 
@@ -997,13 +975,6 @@ impl AsRef<str> for RawStr {
     #[inline(always)]
     fn as_ref(&self) -> &str {
         self.as_str()
-    }
-}
-
-impl AsRef<std::ffi::OsStr> for RawStr {
-    #[inline(always)]
-    fn as_ref(&self) -> &std::ffi::OsStr {
-        self.as_str().as_ref()
     }
 }
 

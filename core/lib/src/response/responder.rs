@@ -484,8 +484,7 @@ impl<'r, 'o: 'r, R: Responder<'r, 'o>> Responder<'r, 'o> for Option<R> {
         match self {
             Some(r) => r.respond_to(req),
             None => {
-                let type_name = std::any::type_name::<Self>();
-                debug!(type_name, "`Option` responder returned `None`");
+                warn_!("Response was `None`.");
                 Err(Status::NotFound)
             },
         }
@@ -507,13 +506,13 @@ impl<'r, 'o: 'r, 't: 'o, 'e: 'o, T, E> Responder<'r, 'o> for Result<T, E>
 
 /// Responds with the wrapped `Responder` in `self`, whether it is `Left` or
 /// `Right`.
-impl<'r, 'o: 'r, 't: 'o, 'e: 'o, T, E> Responder<'r, 'o> for either::Either<T, E>
+impl<'r, 'o: 'r, 't: 'o, 'e: 'o, T, E> Responder<'r, 'o> for crate::Either<T, E>
     where T: Responder<'r, 't>, E: Responder<'r, 'e>
 {
     fn respond_to(self, req: &'r Request<'_>) -> response::Result<'o> {
         match self {
-            either::Either::Left(r) => r.respond_to(req),
-            either::Either::Right(r) => r.respond_to(req),
+            crate::Either::Left(r) => r.respond_to(req),
+            crate::Either::Right(r) => r.respond_to(req),
         }
     }
 }
@@ -543,10 +542,7 @@ impl<'r> Responder<'r, 'static> for Status {
                 Response::build().status(self).ok()
             }
             _ => {
-                error!(status = self.code,
-                    "invalid status used as responder\n\
-                    status must be one of 100, 200..=205, 400..=599");
-
+                error_!("Invalid status used as responder: {}.", self);
                 Err(Status::InternalServerError)
             }
         }

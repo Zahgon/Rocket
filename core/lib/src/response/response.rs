@@ -1,6 +1,7 @@
 use std::{fmt, str};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::pin::Pin;
 
 use tokio::io::{AsyncRead, AsyncSeek};
 
@@ -114,8 +115,9 @@ impl<'r> Builder<'r> {
     /// the same name exist, they are all removed, and only the new header and
     /// value will remain.
     ///
-    /// The type of `header` can be any type that implements `Into<Header>`. See
-    /// [trait implementations](Header#trait-implementations).
+    /// The type of `header` can be any type that implements `Into<Header>`.
+    /// This includes `Header` itself, [`ContentType`](crate::http::ContentType) and
+    /// [hyper::header types](crate::http::hyper::header).
     ///
     /// # Example
     ///
@@ -143,18 +145,20 @@ impl<'r> Builder<'r> {
     /// `Response`. This allows for multiple headers with the same name and
     /// potentially different values to be present in the `Response`.
     ///
-    /// The type of `header` can be any type that implements `Into<Header>`. See
-    /// [trait implementations](Header#trait-implementations).
+    /// The type of `header` can be any type that implements `Into<Header>`.
+    /// This includes `Header` itself, [`ContentType`](crate::http::ContentType) and
+    /// [hyper::header types](crate::http::hyper::header).
     ///
     /// # Example
     ///
     /// ```rust
     /// use rocket::Response;
-    /// use rocket::http::{Header, Accept};
+    /// use rocket::http::Header;
+    /// use rocket::http::hyper::header::ACCEPT;
     ///
     /// let response = Response::build()
-    ///     .header_adjoin(Header::new("Accept", "application/json"))
-    ///     .header_adjoin(Accept::XML)
+    ///     .header_adjoin(Header::new(ACCEPT.as_str(), "application/json"))
+    ///     .header_adjoin(Header::new(ACCEPT.as_str(), "text/plain"))
     ///     .finalize();
     ///
     /// assert_eq!(response.headers().get("Accept").count(), 2);
@@ -283,7 +287,7 @@ impl<'r> Builder<'r> {
     ///
     /// #[rocket::async_trait]
     /// impl IoHandler for EchoHandler {
-    ///     async fn io(self: Box<Self>, io: IoStream) -> io::Result<()> {
+    ///     async fn io(self: Pin<Box<Self>>, io: IoStream) -> io::Result<()> {
     ///         let (mut reader, mut writer) = io::split(io);
     ///         io::copy(&mut reader, &mut writer).await?;
     ///         Ok(())
@@ -484,7 +488,7 @@ pub struct Response<'r> {
     status: Option<Status>,
     headers: HeaderMap<'r>,
     body: Body<'r>,
-    upgrade: HashMap<Uncased<'r>, Box<dyn IoHandler + 'r>>,
+    upgrade: HashMap<Uncased<'r>, Pin<Box<dyn IoHandler + 'r>>>,
 }
 
 impl<'r> Response<'r> {
@@ -637,14 +641,11 @@ impl<'r> Response<'r> {
         &self.headers
     }
 
-    pub fn set_header_map<'h: 'r>(&mut self, headers: HeaderMap<'h>) {
-        self.headers = headers;
-    }
-
     /// Sets the header `header` in `self`. Any existing headers with the name
     /// `header.name` will be lost, and only `header` will remain. The type of
-    /// `header` can be any type that implements `Into<Header>`. See [trait
-    /// implementations](Header#trait-implementations).
+    /// `header` can be any type that implements `Into<Header>`. This includes
+    /// `Header` itself, [`ContentType`](crate::http::ContentType) and
+    /// [`hyper::header` types](crate::http::hyper::header).
     ///
     /// # Example
     ///
@@ -699,22 +700,23 @@ impl<'r> Response<'r> {
     /// name `header.name`, another header with the same name and value
     /// `header.value` is added. The type of `header` can be any type that
     /// implements `Into<Header>`. This includes `Header` itself,
-    /// [`ContentType`](crate::http::ContentType),
-    /// [`Accept`](crate::http::Accept).
+    /// [`ContentType`](crate::http::ContentType) and [`hyper::header`
+    /// types](crate::http::hyper::header).
     ///
     /// # Example
     ///
     /// ```rust
     /// use rocket::Response;
-    /// use rocket::http::{Header, Accept};
+    /// use rocket::http::Header;
+    /// use rocket::http::hyper::header::ACCEPT;
     ///
     /// let mut response = Response::new();
-    /// response.adjoin_header(Accept::JSON);
-    /// response.adjoin_header(Header::new("Accept", "text/plain"));
+    /// response.adjoin_header(Header::new(ACCEPT.as_str(), "application/json"));
+    /// response.adjoin_header(Header::new(ACCEPT.as_str(), "text/plain"));
     ///
     /// let mut accept_headers = response.headers().iter();
-    /// assert_eq!(accept_headers.next(), Some(Header::new("Accept", "application/json")));
-    /// assert_eq!(accept_headers.next(), Some(Header::new("Accept", "text/plain")));
+    /// assert_eq!(accept_headers.next(), Some(Header::new(ACCEPT.as_str(), "application/json")));
+    /// assert_eq!(accept_headers.next(), Some(Header::new(ACCEPT.as_str(), "text/plain")));
     /// assert_eq!(accept_headers.next(), None);
     /// ```
     #[inline(always)]
@@ -724,7 +726,10 @@ impl<'r> Response<'r> {
 
     /// Adds a custom header with name `name` and value `value` to `self`. If
     /// `self` already contains headers with the name `name`, another header
-    /// with the same `name` and `value` is added.
+    /// with the same `name` and `value` is added. The type of `header` can be
+    /// any type implements `Into<Header>`. This includes `Header` itself,
+    /// [`ContentType`](crate::http::ContentType) and [`hyper::header`
+    /// types](crate::http::hyper::header).
     ///
     /// # Example
     ///
@@ -793,13 +798,13 @@ impl<'r> Response<'r> {
     }
 
     /// Returns `Ok(Some(_))` if `self` contains a suitable handler for any of
-    /// the comma-separated protocol strings in `I`. Returns `Err(_)` if
-    /// `protocols` is non-empty but no match was found in `self`. If `self`
-    /// doesn't support any kind of upgrade, return `Ok(None)`.
-    pub(crate) fn search_upgrades<'a, I: Iterator<Item = &'a str>>(
+    /// the comma-separated protocols any of the strings in `I`. Returns
+    /// `Ok(None)` if `self` doesn't support any kind of upgrade. Returns
+    /// `Err(_)` if `protocols` is non-empty but no match was found in `self`.
+    pub(crate) fn take_upgrade<I: Iterator<Item = &'r str>>(
         &mut self,
         protocols: I
-    ) -> Result<Option<(Uncased<'r>, Box<dyn IoHandler + 'r>)>, ()> {
+    ) -> Result<Option<(Uncased<'r>, Pin<Box<dyn IoHandler + 'r>>)>, ()> {
         if self.upgrade.is_empty() {
             return Ok(None);
         }
@@ -834,7 +839,7 @@ impl<'r> Response<'r> {
     ///
     /// #[rocket::async_trait]
     /// impl IoHandler for EchoHandler {
-    ///     async fn io(self: Box<Self>, io: IoStream) -> io::Result<()> {
+    ///     async fn io(self: Pin<Box<Self>>, io: IoStream) -> io::Result<()> {
     ///         let (mut reader, mut writer) = io::split(io);
     ///         io::copy(&mut reader, &mut writer).await?;
     ///         Ok(())
@@ -849,7 +854,7 @@ impl<'r> Response<'r> {
     /// assert!(response.upgrade("raw-echo").is_some());
     /// # })
     /// ```
-    pub fn upgrade(&mut self, proto: &str) -> Option<&mut (dyn IoHandler + 'r)> {
+    pub fn upgrade(&mut self, proto: &str) -> Option<Pin<&mut (dyn IoHandler + 'r)>> {
         self.upgrade.get_mut(proto.as_uncased()).map(|h| h.as_mut())
     }
 
@@ -967,7 +972,7 @@ impl<'r> Response<'r> {
     ///
     /// #[rocket::async_trait]
     /// impl IoHandler for EchoHandler {
-    ///     async fn io(self: Box<Self>, io: IoStream) -> io::Result<()> {
+    ///     async fn io(self: Pin<Box<Self>>, io: IoStream) -> io::Result<()> {
     ///         let (mut reader, mut writer) = io::split(io);
     ///         io::copy(&mut reader, &mut writer).await?;
     ///         Ok(())
@@ -985,7 +990,7 @@ impl<'r> Response<'r> {
     pub fn add_upgrade<N, H>(&mut self, protocol: N, handler: H)
         where N: Into<Uncased<'r>>, H: IoHandler + 'r
     {
-        self.upgrade.insert(protocol.into(), Box::new(handler));
+        self.upgrade.insert(protocol.into(), Box::pin(handler));
     }
 
     /// Sets the body's maximum chunk size to `size` bytes.

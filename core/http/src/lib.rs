@@ -4,11 +4,15 @@
 //! Types that map to concepts in HTTP.
 //!
 //! This module exports types that map to HTTP concepts or to the underlying
-//! HTTP library when needed.
+//! HTTP library when needed. Because the underlying HTTP library is likely to
+//! change (see [#17]), types in [`hyper`] should be considered unstable.
+//!
+//! [#17]: https://github.com/rwf2/Rocket/issues/17
 
 #[macro_use]
 extern crate pear;
 
+pub mod hyper;
 pub mod uri;
 pub mod ext;
 
@@ -18,6 +22,7 @@ mod method;
 mod status;
 mod raw_str;
 mod parse;
+mod listener;
 
 /// Case-preserving, ASCII case-insensitive string types.
 ///
@@ -33,25 +38,16 @@ pub mod uncased {
 #[path = "."]
 pub mod private {
     pub use crate::parse::Indexed;
+    pub use smallvec::{SmallVec, Array};
+    pub use crate::listener::{TcpListener, Incoming, Listener, Connection, Certificates};
+    pub use cookie;
 }
+
+#[doc(hidden)]
+#[cfg(feature = "tls")]
+pub mod tls;
 
 pub use crate::method::Method;
 pub use crate::status::{Status, StatusClass};
 pub use crate::raw_str::{RawStr, RawStrBuf};
 pub use crate::header::*;
-
-/// HTTP Protocol version
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum HttpVersion {
-    /// `HTTP/0.9`
-    Http09,
-    /// `HTTP/1.0`
-    Http10,
-    /// `HTTP/1.1`
-    Http11,
-    /// `HTTP/2`
-    Http2,
-    /// `HTTP/3`
-    Http3,
-}

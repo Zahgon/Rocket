@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use rocket::{Rocket, Request, State, Data, Build};
 use rocket::fairing::{self, AdHoc, Fairing, Info, Kind};
-use rocket::trace::Trace;
 use rocket::http::Method;
 
 struct Token(i64);
@@ -64,7 +63,7 @@ fn rocket() -> _ {
         .mount("/", routes![hello, token])
         .attach(Counter::default())
         .attach(AdHoc::try_on_ignite("Token State", |rocket| async {
-            info!("adding token managed state");
+            info!("Adding token managed state...");
             match rocket.figment().extract_inner("token") {
                 Ok(value) => Ok(rocket.manage(Token(value))),
                 Err(_) => Err(rocket)
@@ -75,20 +74,17 @@ fn rocket() -> _ {
         })))
         .attach(AdHoc::on_request("PUT Rewriter", |req, _| {
             Box::pin(async move {
+                println!("    => Incoming request: {}", req);
                 if req.uri().path() == "/" {
-                    span_info!("PUT rewriter" => {
-                        req.trace_info();
-                        info!("changing method to `PUT`");
-                        req.set_method(Method::Put);
-                        req.trace_info();
-                    })
+                    println!("    => Changing method to `PUT`.");
+                    req.set_method(Method::Put);
                 }
             })
         }))
         .attach(AdHoc::on_response("Response Rewriter", |req, res| {
             Box::pin(async move {
                 if req.uri().path() == "/" {
-                    info!("rewriting response body");
+                    println!("    => Rewriting response body.");
                     res.set_sized_body(None, Cursor::new("Hello, fairings!"));
                 }
             })

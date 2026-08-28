@@ -581,10 +581,7 @@ error[E0277]: the trait bound `bool: From<&str>` is not satisfied
     |          -------- in this derive macro expansion
 208 | struct Default6 {
 209 |     #[field(default = "no conversion")]
-    |                       ^^^^^^^^^^^^^^^
-    |                       |
-    |                       the trait `From<&str>` is not implemented for `bool`, which is required by `&str: Into<_>`
-    |                       this tail expression is of type `&str`
+    |                       ^^^^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `bool`, which is required by `&str: Into<_>`
     |
     = help: the following other types implement trait `From<T>`:
               <bool as From<format_description::parse::format_item::HourBase>>

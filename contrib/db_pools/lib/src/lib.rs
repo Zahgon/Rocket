@@ -7,7 +7,7 @@
 //!
 //!    ```toml
 //!    [dependencies.rocket_db_pools]
-//!    version = "0.1.0"
+//!    version = "0.2.0"
 //!    features = ["sqlx_sqlite"]
 //!    ```
 //!
@@ -103,12 +103,12 @@
 //! Drivers have a varying degree of support for graceful shutdown, affected by
 //! the `Type::init()` fairing on Rocket shutdown.
 //!
-//! ## `deadpool` (v0.12)
+//! ## `deadpool` (v0.13)
 //!
 //! | Database | Feature                     | [`Pool`] Type               | [`Connection`] Deref                 |
 //! |----------|-----------------------------|-----------------------------|--------------------------------------|
-//! | Postgres | `deadpool_postgres` (v0.14) | [`deadpool_postgres::Pool`] | [`deadpool_postgres::ClientWrapper`] |
-//! | Redis    | `deadpool_redis` (v0.16)    | [`deadpool_redis::Pool`]    | [`deadpool_redis::Connection`]       |
+//! | Postgres | `deadpool_postgres` (v0.13) | [`deadpool_postgres::Pool`] | [`deadpool_postgres::ClientWrapper`] |
+//! | Redis    | `deadpool_redis` (v0.15)    | [`deadpool_redis::Pool`]    | [`deadpool_redis::Connection`]       |
 //!
 //! On shutdown, new connections are denied. Shutdown _does not_ wait for
 //! connections to be returned.
@@ -131,7 +131,7 @@
 //! On shutdown, new connections are denied. Shutdown waits for connections to
 //! be returned.
 //!
-//! ## `mongodb` (v3)
+//! ## `mongodb` (v2)
 //!
 //! | Database | Feature   | [`Pool`] Type and [`Connection`] Deref |
 //! |----------|-----------|----------------------------------------|
@@ -165,7 +165,7 @@
 //! features = ["macros", "migrate"]
 //!
 //! [dependencies.rocket_db_pools]
-//! version = "0.1.0"
+//! version = "0.2.0"
 //! features = ["sqlx_sqlite"]
 //! ```
 //!
@@ -231,7 +231,7 @@
 //! Any database driver can implement support for this library by implementing
 //! the [`Pool`] trait.
 
-#![doc(html_root_url = "https://api.rocket.rs/master/rocket_db_pools")]
+#![doc(html_root_url = "https://api.rocket.rs/v0.5/rocket_db_pools")]
 #![doc(html_favicon_url = "https://rocket.rs/images/favicon.ico")]
 #![doc(html_logo_url = "https://rocket.rs/images/logo-boxed.png")]
 

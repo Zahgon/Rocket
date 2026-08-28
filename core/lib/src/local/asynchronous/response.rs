@@ -30,7 +30,7 @@ use crate::{Request, Response};
 /// #[launch]
 /// fn rocket() -> _ {
 ///     rocket::build().mount("/", routes![hello_world])
-///     #    .reconfigure(rocket::Config::debug_default())
+///     #    .configure(rocket::Config::debug_default())
 /// }
 ///
 /// # async fn read_body_manually() -> io::Result<()> {
@@ -53,14 +53,9 @@ use crate::{Request, Response};
 ///
 /// For more, see [the top-level documentation](../index.html#localresponse).
 pub struct LocalResponse<'c> {
-    // XXX: SAFETY: This (dependent) field must come first due to drop order!
+    _request: Box<Request<'c>>,
     response: Response<'c>,
     cookies: CookieJar<'c>,
-    _request: Box<Request<'c>>,
-}
-
-impl Drop for LocalResponse<'_> {
-    fn drop(&mut self) { }
 }
 
 impl<'c> LocalResponse<'c> {
@@ -69,8 +64,7 @@ impl<'c> LocalResponse<'c> {
               O: Future<Output = Response<'c>> + Send
     {
         // `LocalResponse` is a self-referential structure. In particular,
-        // `response` and `cookies` can refer to `_request` and its contents. As
-        // such, we must
+        // `inner` can refer to `_request` and its contents. As such, we must
         //   1) Ensure `Request` has a stable address.
         //
         //      This is done by `Box`ing the `Request`, using only the stable
@@ -93,17 +87,13 @@ impl<'c> LocalResponse<'c> {
         let request: &'c Request<'c> = unsafe { &*(&*boxed_req as *const _) };
 
         async move {
-            // NOTE: The cookie jar `secure` state will not reflect the last
-            // known value in `request.cookies()`. This is okay: new cookies
-            // should never be added to the resulting jar which is the only time
-            // the value is used to set cookie defaults.
             let response: Response<'c> = f(request).await;
-            let mut cookies = CookieJar::new(None, request.rocket());
+            let mut cookies = CookieJar::new(request.rocket().config());
             for cookie in response.cookies() {
                 cookies.add_original(cookie.into_owned());
             }
 
-            LocalResponse { _request: boxed_req, cookies, response, }
+            LocalResponse { cookies, _request: boxed_req, response, }
         }
     }
 }
@@ -126,15 +116,15 @@ impl LocalResponse<'_> {
     }
 
     #[cfg(feature = "json")]
-    async fn _into_json<T>(self) -> Option<T>
-        where T: Send + serde::de::DeserializeOwned + 'static
+    async fn _into_json<T: Send + 'static>(self) -> Option<T>
+        where T: serde::de::DeserializeOwned
     {
         self.blocking_read(|r| serde_json::from_reader(r)).await?.ok()
     }
 
     #[cfg(feature = "msgpack")]
-    async fn _into_msgpack<T>(self) -> Option<T>
-        where T: Send + serde::de::DeserializeOwned + 'static
+    async fn _into_msgpack<T: Send + 'static>(self) -> Option<T>
+        where T: serde::de::DeserializeOwned
     {
         self.blocking_read(|r| rmp_serde::from_read(r)).await?.ok()
     }
@@ -180,7 +170,7 @@ impl LocalResponse<'_> {
             // TODO: Try to fill as much as the buffer before send it off?
             let mut buf = Vec::with_capacity(1024);
             match self.read_buf(&mut buf).await {
-                Ok(0) => break,
+                Ok(n) if n == 0 => break,
                 Ok(_) => tx.send(Ok(buf)).await.ok()?,
                 Err(e) => {
                     tx.send(Err(e)).await.ok()?;

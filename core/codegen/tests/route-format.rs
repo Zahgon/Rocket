@@ -66,19 +66,19 @@ fn test_formats() {
 
 // Test custom formats.
 
-#[suppress(unknown_format)]
+// TODO: #[rocket(allow(unknown_format))]
 #[get("/", format = "application/foo")]
 fn get_foo() -> &'static str { "get_foo" }
 
-#[suppress(unknown_format)]
+// TODO: #[rocket(allow(unknown_format))]
 #[post("/", format = "application/foo")]
 fn post_foo() -> &'static str { "post_foo" }
 
-#[suppress(unknown_format)]
+// TODO: #[rocket(allow(unknown_format))]
 #[get("/", format = "bar/baz", rank = 2)]
 fn get_bar_baz() -> &'static str { "get_bar_baz" }
 
-#[suppress(unknown_format)]
+// TODO: #[rocket(allow(unknown_format))]
 #[put("/", format = "bar/baz")]
 fn put_bar_baz() -> &'static str { "put_bar_baz" }
 
@@ -89,10 +89,10 @@ fn test_custom_formats() {
 
     let client = Client::debug(rocket).unwrap();
 
-    let foo_a = Accept::new([MediaType::new("application", "foo")]);
+    let foo_a = Accept::new([MediaType::new("application", "foo").into()]);
     let foo_ct = ContentType::new("application", "foo");
     let bar_baz_ct = ContentType::new("bar", "baz");
-    let bar_baz_a = Accept::new([MediaType::new("bar", "baz")]);
+    let bar_baz_a = Accept::new([MediaType::new("bar", "baz").into()]);
 
     let response = client.get("/").header(foo_a).dispatch();
     assert_eq!(response.into_string().unwrap(), "get_foo");

@@ -28,7 +28,7 @@ use crate::uri::error::PathError;
 ///         _ => panic!("only four segments")
 ///     }
 /// }
-/// # assert_eq!(uri.path().segments().num(), 4);
+/// # assert_eq!(uri.path().segments().len(), 4);
 /// # assert_eq!(uri.path().segments().count(), 4);
 /// # assert_eq!(uri.path().segments().next(), Some("a z"));
 /// ```
@@ -55,19 +55,19 @@ impl<P: Part> Segments<'_, P> {
     /// let uri = uri!("/foo/bar?baz&cat&car");
     ///
     /// let mut segments = uri.path().segments();
-    /// assert_eq!(segments.num(), 2);
+    /// assert_eq!(segments.len(), 2);
     ///
     /// segments.next();
-    /// assert_eq!(segments.num(), 1);
+    /// assert_eq!(segments.len(), 1);
     ///
     /// segments.next();
-    /// assert_eq!(segments.num(), 0);
+    /// assert_eq!(segments.len(), 0);
     ///
     /// segments.next();
-    /// assert_eq!(segments.num(), 0);
+    /// assert_eq!(segments.len(), 0);
     /// ```
     #[inline]
-    pub fn num(&self) -> usize {
+    pub fn len(&self) -> usize {
         let max_pos = std::cmp::min(self.pos, self.segments.len());
         self.segments.len() - max_pos
     }
@@ -89,7 +89,7 @@ impl<P: Part> Segments<'_, P> {
     /// ```
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.num() == 0
+        self.len() == 0
     }
 
     /// Returns a new `Segments` with `n` segments skipped.
@@ -101,11 +101,11 @@ impl<P: Part> Segments<'_, P> {
     /// let uri = uri!("/foo/bar/baz/cat");
     ///
     /// let mut segments = uri.path().segments();
-    /// assert_eq!(segments.num(), 4);
+    /// assert_eq!(segments.len(), 4);
     /// assert_eq!(segments.next(), Some("foo"));
     ///
     /// let mut segments = segments.skip(2);
-    /// assert_eq!(segments.num(), 1);
+    /// assert_eq!(segments.len(), 1);
     /// assert_eq!(segments.next(), Some("cat"));
     /// ```
     #[inline]
@@ -143,21 +143,6 @@ impl<'a> Segments<'a, Path> {
     ///
     /// ```rust
     /// # #[macro_use] extern crate rocket;
-    /// let a = uri!("/");
-    /// let b = uri!("/");
-    /// assert!(a.path().segments().prefix_of(b.path().segments()));
-    /// assert!(b.path().segments().prefix_of(a.path().segments()));
-    ///
-    /// let a = uri!("/");
-    /// let b = uri!("/foo");
-    /// assert!(a.path().segments().prefix_of(b.path().segments()));
-    /// assert!(!b.path().segments().prefix_of(a.path().segments()));
-    ///
-    /// let a = uri!("/foo");
-    /// let b = uri!("/foo/");
-    /// assert!(a.path().segments().prefix_of(b.path().segments()));
-    /// assert!(!b.path().segments().prefix_of(a.path().segments()));
-    ///
     /// let a = uri!("/foo/bar/baaaz/cat");
     /// let b = uri!("/foo/bar");
     ///
@@ -170,17 +155,16 @@ impl<'a> Segments<'a, Path> {
     /// ```
     #[inline]
     pub fn prefix_of(self, other: Segments<'_, Path>) -> bool {
-        if self.num() > other.num() {
+        if self.len() > other.len() {
             return false;
         }
 
-        self.zip(other).all(|(a, b)| a.is_empty() || a == b)
+        self.zip(other).all(|(a, b)| a == b)
     }
 
     /// Creates a `PathBuf` from `self`. The returned `PathBuf` is
-    /// percent-decoded and guaranteed to be relative. If a segment is equal to
-    /// `.`, it is skipped. If a segment is equal to `..`, the previous segment
-    /// (if any) is skipped.
+    /// percent-decoded. If a segment is equal to `..`, the previous segment (if
+    /// any) is skipped.
     ///
     /// For security purposes, if a segment meets any of the following
     /// conditions, an `Err` is returned indicating the condition met:
@@ -194,7 +178,7 @@ impl<'a> Segments<'a, Path> {
     /// Additionally, if `allow_dotfiles` is `false`, an `Err` is returned if
     /// the following condition is met:
     ///
-    ///   * Decoded segment starts with any of: `.` (except `..` and `.`)
+    ///   * Decoded segment starts with any of: `.` (except `..`)
     ///
     /// As a result of these conditions, a `PathBuf` derived via `FromSegments`
     /// is safe to interpolate within, or use as a suffix of, a path without
@@ -217,9 +201,7 @@ impl<'a> Segments<'a, Path> {
     pub fn to_path_buf(&self, allow_dotfiles: bool) -> Result<PathBuf, PathError> {
         let mut buf = PathBuf::new();
         for segment in self.clone() {
-            if segment == "." {
-                continue;
-            } else if segment == ".." {
+            if segment == ".." {
                 buf.pop();
             } else if !allow_dotfiles && segment.starts_with('.') {
                 return Err(PathError::BadStart('.'))
@@ -238,7 +220,7 @@ impl<'a> Segments<'a, Path> {
             } else if cfg!(windows) && segment.contains(':') {
                 return Err(PathError::BadChar(':'))
             } else {
-                buf.push(segment)
+                buf.push(&*segment)
             }
         }
 
@@ -289,11 +271,11 @@ macro_rules! impl_iterator {
             }
 
             fn size_hint(&self) -> (usize, Option<usize>) {
-                (self.num(), Some(self.num()))
+                (self.len(), Some(self.len()))
             }
 
             fn count(self) -> usize {
-                self.num()
+                self.len()
             }
         }
     )

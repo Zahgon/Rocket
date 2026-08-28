@@ -5,8 +5,11 @@ use std::hash::{Hash, Hasher};
 
 use either::Either;
 
+use crate::ext::IntoCollection;
 use crate::uncased::UncasedStr;
 use crate::parse::{Indexed, IndexedStr, parse_media_type};
+
+use smallvec::SmallVec;
 
 /// An HTTP media type.
 ///
@@ -55,14 +58,14 @@ pub struct MediaType {
     /// The subtype.
     pub(crate) sub: IndexedStr<'static>,
     /// The parameters, if any.
-    pub(crate) params: MediaParams,
+    pub(crate) params: MediaParams
 }
 
-// TODO: `Static` variant is needed for `const`.
+// FIXME: `Static` variant is needed for `const`. Need `const SmallVec::new`.
 #[derive(Debug, Clone)]
 pub(crate) enum MediaParams {
     Static(&'static [(&'static str, &'static str)]),
-    Dynamic(Vec<(IndexedStr<'static>, IndexedStr<'static>)>)
+    Dynamic(SmallVec<[(IndexedStr<'static>, IndexedStr<'static>); 2]>)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,7 +309,7 @@ impl MediaType {
     /// # extern crate rocket;
     /// use rocket::http::MediaType;
     ///
-    /// let id = MediaType::new("application", "x-id").with_params([("id", "1")]);
+    /// let id = MediaType::new("application", "x-id").with_params(("id", "1"));
     /// assert_eq!(id.to_string(), "application/x-id; id=1".to_string());
     /// ```
     ///
@@ -324,12 +327,11 @@ impl MediaType {
     pub fn with_params<K, V, P>(mut self, ps: P) -> MediaType
         where K: Into<Cow<'static, str>>,
               V: Into<Cow<'static, str>>,
-              P: IntoIterator<Item = (K, V)>
+              P: IntoCollection<(K, V)>
     {
-        let params = ps.into_iter()
-            .map(|(k, v)| (Indexed::Concrete(k.into()), Indexed::Concrete(v.into())))
-            .collect();
+        use Indexed::Concrete;
 
+        let params = ps.mapped(|(k, v)| (Concrete(k.into()), Concrete(v.into())));
         self.params = MediaParams::Dynamic(params);
         self
     }
@@ -476,7 +478,7 @@ impl MediaType {
     /// use rocket::http::MediaType;
     ///
     /// let plain = MediaType::Plain;
-    /// let plain2 = MediaType::new("text", "plain").with_params([("charset", "utf-8")]);
+    /// let plain2 = MediaType::new("text", "plain").with_params(("charset", "utf-8"));
     /// let just_plain = MediaType::new("text", "plain");
     ///
     /// // The `PartialEq` implementation doesn't consider parameters.
@@ -525,7 +527,7 @@ impl MediaType {
         let raw = match self.params {
             MediaParams::Static(slice) => Either::Left(slice.iter().cloned()),
             MediaParams::Dynamic(ref vec) => {
-                Either::Right(vec.iter().map(move |(key, val)| {
+                Either::Right(vec.iter().map(move |&(ref key, ref val)| {
                     let source_str = self.source.as_str();
                     (key.from_source(source_str), val.from_source(source_str))
                 }))
@@ -592,19 +594,9 @@ impl fmt::Display for MediaType {
     }
 }
 
-impl IntoIterator for MediaType {
-    type Item = Self;
-
-    type IntoIter = std::iter::Once<Self>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        std::iter::once(self)
-    }
-}
-
 impl Default for MediaParams {
     fn default() -> Self {
-        MediaParams::Dynamic(Vec::new())
+        MediaParams::Dynamic(SmallVec::new())
     }
 }
 

@@ -1,7 +1,5 @@
-use std::path::{Path, PathBuf};
 use std::collections::{BTreeMap, HashMap};
-
-use either::Either;
+use std::path::{Path, PathBuf};
 
 use crate::uri::fmt::UriDisplay;
 use crate::uri::fmt::{self, Part};
@@ -63,7 +61,7 @@ use crate::uri::fmt::{self, Part};
 ///
 ///    * `String`, `i8`, `i16`, `i32`, `i64`, `i128`, `isize`, `u8`, `u16`,
 ///      `u32`, `u64`, `u128`, `usize`, `f32`, `f64`, `bool`, `IpAddr`,
-///      `Ipv4Addr`, `Ipv6Addr`, `&str`, `Cow<str>`, `Either<A, B>`
+///      `Ipv4Addr`, `Ipv6Addr`, `&str`, `Cow<str>`
 ///
 /// The following types have _identity_ implementations _only in [`Path`]_:
 ///
@@ -377,27 +375,12 @@ impl<A, T: FromUriParam<fmt::Path, A>> FromUriParam<fmt::Path, A> for Option<T> 
 }
 
 /// A no cost conversion allowing `T` to be used in place of an `Result<T, E>`.
-impl<A, E, T> FromUriParam<fmt::Path, A> for Result<T, E>
-    where T: FromUriParam<fmt::Path, A>
-{
+impl<A, E, T: FromUriParam<fmt::Path, A>> FromUriParam<fmt::Path, A> for Result<T, E> {
     type Target = T::Target;
 
     #[inline(always)]
     fn from_uri_param(param: A) -> Self::Target {
         T::from_uri_param(param)
-    }
-}
-
-impl<P: Part, A, B, T, U> FromUriParam<P, Either<A, B>> for Either<T, U>
-    where T: FromUriParam<P, A>, U: FromUriParam<P, B>
-{
-    type Target = Either<T::Target, U::Target>;
-
-    fn from_uri_param(param: Either<A, B>) -> Self::Target {
-        match param {
-            Either::Left(a) => Either::Left(T::from_uri_param(a)),
-            Either::Right(b) => Either::Right(U::from_uri_param(b)),
-        }
     }
 }
 

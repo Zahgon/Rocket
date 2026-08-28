@@ -191,8 +191,8 @@ pub type Result<T = Rocket<Build>, E = Rocket<Build>> = std::result::Result<T, E
 ///     ***Note: Shutdown fairings are only run during testing if the `Client`
 ///     is terminated using [`Client::terminate()`].***
 ///
-///     [shutdown is triggered]: crate::config::ShutdownConfig#triggers
-///     [grace and mercy periods]: crate::config::ShutdownConfig#summary
+///     [shutdown is triggered]: crate::config::Shutdown#triggers
+///     [grace and mercy periods]: crate::config::Shutdown#summary
 ///     [`Client::terminate()`]: crate::local::blocking::Client::terminate()
 ///
 /// # Singletons
@@ -423,9 +423,9 @@ pub type Result<T = Rocket<Build>, E = Rocket<Build>> = std::result::Result<T, E
 /// }
 /// ```
 ///
-/// [request-local state]: https://rocket.rs/master/guide/state/#request-local-state
+/// [request-local state]: https://rocket.rs/v0.5/guide/state/#request-local-state
 #[crate::async_trait]
-pub trait Fairing: Send + Sync + AsAny + 'static {
+pub trait Fairing: Send + Sync + Any + 'static {
     /// Returns an [`Info`] structure containing the `name` and [`Kind`] of this
     /// fairing. The `name` can be any arbitrary string. `Kind` must be an `or`d
     /// set of `Kind` variants.
@@ -525,17 +525,12 @@ pub trait Fairing: Send + Sync + AsAny + 'static {
     /// is in the `kind` field of the `Info` structure for this fairing. The
     /// `Rocket` parameter corresponds to the running application.
     ///
-    /// [shutdown is triggered]: crate::config::ShutdownConfig#triggers
+    /// [shutdown is triggered]: crate::config::Shutdown#triggers
     ///
     /// ## Default Implementation
     ///
     /// The default implementation of this method does nothing.
     async fn on_shutdown(&self, _rocket: &Rocket<Orbit>) { }
-}
-
-pub trait AsAny: Any {
-    fn as_any_ref(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 #[crate::async_trait]
@@ -568,20 +563,5 @@ impl<T: Fairing + ?Sized> Fairing for std::sync::Arc<T> {
     #[inline]
     async fn on_shutdown(&self, rocket: &Rocket<Orbit>) {
         (self as &T).on_shutdown(rocket).await
-    }
-}
-
-impl<T: Any> AsAny for T {
-    fn as_any_ref(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
-}
-
-impl dyn Fairing {
-    fn downcast_ref<T: Any>(&self) -> Option<&T> {
-        self.as_any_ref().downcast_ref()
-    }
-
-    fn downcast_mut<T: Any>(&mut self) -> Option<&mut T> {
-        self.as_any_mut().downcast_mut()
     }
 }

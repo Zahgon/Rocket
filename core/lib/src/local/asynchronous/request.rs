@@ -1,7 +1,5 @@
 use std::fmt;
 
-use rocket_http::HttpVersion;
-
 use crate::{Request, Data};
 use crate::http::{Status, Method};
 use crate::http::uri::Origin;
@@ -25,7 +23,7 @@ use super::{Client, LocalResponse};
 /// let client = Client::tracked(rocket::build()).await.expect("valid rocket");
 /// let req = client.post("/")
 ///     .header(ContentType::JSON)
-///     .remote("127.0.0.1:8000")
+///     .remote("127.0.0.1:8000".parse().unwrap())
 ///     .cookie(("name", "value"))
 ///     .body(r#"{ "value": 42 }"#);
 ///
@@ -50,7 +48,7 @@ impl<'c> LocalRequest<'c> {
 
         // Create a request. We'll handle bad URIs later, in `_dispatch`.
         let origin = try_origin.clone().unwrap_or_else(|bad| bad);
-        let mut request = Request::new(client.rocket(), method, origin, None);
+        let mut request = Request::new(client.rocket(), method, origin);
 
         // Add any cookies we know about.
         if client.tracked {
@@ -62,11 +60,6 @@ impl<'c> LocalRequest<'c> {
         }
 
         LocalRequest { client, request, uri: try_origin, data: vec![] }
-    }
-
-    #[inline]
-    pub fn override_version(&mut self, version: HttpVersion) {
-        self.version = Some(version);
     }
 
     pub(crate) fn _request(&self) -> &Request<'c> {
@@ -93,14 +86,14 @@ impl<'c> LocalRequest<'c> {
             if self.inner().uri() == invalid {
                 error!("invalid request URI: {:?}", invalid.path());
                 return LocalResponse::new(self.request, move |req| {
-                    rocket.dispatch_error(Status::BadRequest, req)
+                    rocket.handle_error(Status::BadRequest, req)
                 }).await
             }
         }
 
         // Actually dispatch the request.
         let mut data = Data::local(self.data);
-        let token = rocket.preprocess(&mut self.request, &mut data).await;
+        let token = rocket.preprocess_request(&mut self.request, &mut data).await;
         let response = LocalResponse::new(self.request, move |req| {
             rocket.dispatch(token, req, data)
         }).await;

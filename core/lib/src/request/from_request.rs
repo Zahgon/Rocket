@@ -1,13 +1,12 @@
-use std::fmt::Debug;
 use std::convert::Infallible;
+use std::fmt::Debug;
 use std::net::{IpAddr, SocketAddr};
 
 use crate::{Request, Route};
-use crate::outcome::{self, IntoOutcome, Outcome::*};
+use crate::outcome::{self, Outcome::*};
 
 use crate::http::uri::{Host, Origin};
-use crate::http::{Status, ContentType, Accept, Method, ProxyProto, CookieJar};
-use crate::listener::Endpoint;
+use crate::http::{Status, ContentType, Accept, Method, CookieJar};
 
 /// Type alias for the `Outcome` of a `FromRequest` conversion.
 pub type Outcome<S, E> = outcome::Outcome<S, (Status, E), Status>;
@@ -160,12 +159,6 @@ pub type Outcome<S, E> = outcome::Outcome<S, (Status, E), Status>;
 ///     Extracts the client ip address of the incoming request as an [`IpAddr`]
 ///     via [`Request::client_ip()`]. If the client's IP address is not known,
 ///     the request is forwarded with a 500 Internal Server Error status.
-///
-///   * **ProxyProto**
-///
-///     Extracts the protocol of the incoming request as a [`ProxyProto`] via
-///     [`Request::proxy_proto()`]. If no such header is present, the request is
-///     forwarded with a 500 Internal Server Error status.
 ///
 ///   * **SocketAddr**
 ///
@@ -375,7 +368,7 @@ pub type Outcome<S, E> = outcome::Outcome<S, (Status, E), Status>;
 /// Notice that these request guards provide access to *borrowed* data (`&'a
 /// User` and `Admin<'a>`) as the data is now owned by the request's cache.
 ///
-/// [request-local state]: https://rocket.rs/master/guide/state/#request-local-state
+/// [request-local state]: https://rocket.rs/v0.5/guide/state/#request-local-state
 #[crate::async_trait]
 pub trait FromRequest<'r>: Sized {
     /// The associated error to be returned if derivation fails.
@@ -478,31 +471,14 @@ impl<'r> FromRequest<'r> for IpAddr {
 }
 
 #[crate::async_trait]
-impl<'r> FromRequest<'r> for ProxyProto<'r> {
-    type Error = std::convert::Infallible;
-
-    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        request.proxy_proto().or_forward(Status::InternalServerError)
-    }
-}
-
-#[crate::async_trait]
-impl<'r> FromRequest<'r> for &'r Endpoint {
-    type Error = Infallible;
-
-    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Infallible> {
-        request.remote().or_forward(Status::InternalServerError)
-    }
-}
-
-#[crate::async_trait]
 impl<'r> FromRequest<'r> for SocketAddr {
     type Error = Infallible;
 
     async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Infallible> {
-        request.remote()
-            .and_then(|r| r.socket_addr())
-            .or_forward(Status::InternalServerError)
+        match request.remote() {
+            Some(addr) => Success(addr),
+            None => Forward(Status::InternalServerError)
+        }
     }
 }
 

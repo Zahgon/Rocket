@@ -6,8 +6,6 @@ use devise::{Diagnostic, Spanned, Result};
 use devise::ext::SpanDiagnosticExt;
 use proc_macro2::{TokenStream, Span};
 
-use crate::attribute::suppress::Lint;
-
 // Common trait implemented by `async` entry generating attributes.
 trait EntryAttr {
     /// Whether the attribute requires the attributed function to be `async`.
@@ -24,8 +22,6 @@ fn _async_entry<A: EntryAttr>(
     let mut function: syn::ItemFn = syn::parse(input)
         .map_err(Diagnostic::from)
         .map_err(|d| d.help("attribute can only be applied to functions"))?;
-
-    Lint::suppress_attrs(&function.attrs, function.span());
 
     if A::REQUIRES_ASYNC && function.sig.asyncness.is_none() {
         return Err(Span::call_site()

@@ -1,9 +1,16 @@
 use std::fmt;
 
-use cookie::Key;
-use serde::{de, ser, Deserialize};
+use serde::{de, ser, Deserialize, Serialize};
 
+use crate::http::private::cookie::Key;
 use crate::request::{Outcome, Request, FromRequest};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+enum Kind {
+    Zero,
+    Generated,
+    Provided
+}
 
 /// A cryptographically secure secret key.
 ///
@@ -64,8 +71,8 @@ use crate::request::{Outcome, Request, FromRequest};
 /// assert!(matches!(error.kind(), ErrorKind::InsecureSecretKey(profile)));
 /// ```
 ///
-/// [private cookies]: https://rocket.rs/master/guide/requests/#private-cookies
-/// [configuration guide]: https://rocket.rs/master/guide/configuration/#secret-key
+/// [private cookies]: https://rocket.rs/v0.5/guide/requests/#private-cookies
+/// [configuration guide]: https://rocket.rs/v0.5/guide/configuration/#secret-key
 #[derive(Clone)]
 #[cfg_attr(nightly, doc(cfg(feature = "secrets")))]
 pub struct SecretKey {

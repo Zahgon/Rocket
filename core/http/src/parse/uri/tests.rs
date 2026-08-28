@@ -1,3 +1,4 @@
+use crate::uri::{Origin, Authority, Absolute, Asterisk};
 use crate::parse::uri::*;
 
 macro_rules! assert_parse_eq {
@@ -79,7 +80,7 @@ fn test_assert_parse_eq() {
 #[should_panic]
 fn test_assert_parse_eq_consecutive() {
     assert_parse_eq! {
-        "/" => Origin::root(),
+        "/" => Origin::ROOT,
         "/" => Asterisk
     };
 }
@@ -130,7 +131,7 @@ fn test_parse_issue_924_samples() {
 fn single_byte() {
     assert_parse_eq!(
         "*" => Asterisk,
-        "/" => Origin::root(),
+        "/" => Origin::ROOT,
         "." => Authority::new(None, ".", None),
         "_" => Authority::new(None, "_", None),
         "1" => Authority::new(None, "1", None),

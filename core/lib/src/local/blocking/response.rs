@@ -27,7 +27,7 @@ use super::Client;
 /// #[launch]
 /// fn rocket() -> _ {
 ///     rocket::build().mount("/", routes![hello_world])
-///     #    .reconfigure(rocket::Config::debug_default())
+///     #    .configure(rocket::Config::debug_default())
 /// }
 ///
 /// # fn read_body_manually() -> io::Result<()> {
@@ -56,7 +56,7 @@ pub struct LocalResponse<'c> {
 
 impl LocalResponse<'_> {
     fn _response(&self) -> &Response<'_> {
-        self.inner._response()
+        &self.inner._response()
     }
 
     pub(crate) fn _cookies(&self) -> &CookieJar<'_> {

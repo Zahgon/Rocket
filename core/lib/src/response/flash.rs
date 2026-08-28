@@ -244,7 +244,10 @@ impl<'r> FromRequest<'r> for FlashMessage<'r> {
     type Error = ();
 
     async fn from_request(req: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
+        trace_!("Flash: attempting to retrieve message.");
         req.cookies().get(FLASH_COOKIE_NAME).ok_or(()).and_then(|cookie| {
+            trace_!("Flash: retrieving message: {:?}", cookie);
+
             // Parse the flash message.
             let content = cookie.value();
             let (len_str, kv) = match content.find(FLASH_COOKIE_DELIM) {

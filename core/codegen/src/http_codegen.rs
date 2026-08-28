@@ -1,8 +1,8 @@
 use quote::ToTokens;
-use devise::{FromMeta, MetaItem, Result, ext::{Split2, SpanDiagnosticExt}};
+use devise::{FromMeta, MetaItem, Result, ext::{Split2, PathExt, SpanDiagnosticExt}};
 use proc_macro2::{TokenStream, Span};
 
-use crate::{http, attribute::suppress::Lint};
+use crate::http;
 
 #[derive(Debug)]
 pub struct ContentType(pub http::ContentType);
@@ -13,7 +13,7 @@ pub struct Status(pub http::Status);
 #[derive(Debug)]
 pub struct MediaType(pub http::MediaType);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Method(pub http::Method);
 
 #[derive(Clone, Debug)]
@@ -73,11 +73,10 @@ impl FromMeta for MediaType {
         let mt = http::MediaType::parse_flexible(&String::from_meta(meta)?)
             .ok_or_else(|| meta.value_span().error("invalid or unknown media type"))?;
 
-        let lint = Lint::UnknownFormat;
-        if !mt.is_known() && lint.enabled(meta.value_span()) {
+        if !mt.is_known() {
+            // FIXME(diag: warning)
             meta.value_span()
-                .warning(format!("'{}' is not a known format or media type", mt))
-                .note(lint.how_to_suppress())
+                .warning(format!("'{}' is not a known media type", mt))
                 .emit_as_item_tokens();
         }
 
@@ -97,35 +96,54 @@ impl ToTokens for MediaType {
     }
 }
 
+const VALID_METHODS_STR: &str = "`GET`, `PUT`, `POST`, `DELETE`, `HEAD`, \
+    `PATCH`, `OPTIONS`";
+
+const VALID_METHODS: &[http::Method] = &[
+    http::Method::Get, http::Method::Put, http::Method::Post,
+    http::Method::Delete, http::Method::Head, http::Method::Patch,
+    http::Method::Options,
+];
+
 impl FromMeta for Method {
     fn from_meta(meta: &MetaItem) -> Result<Self> {
         let span = meta.value_span();
-        let help = format!("known methods: {}", http::Method::ALL.join(", "));
+        let help_text = format!("method must be one of: {}", VALID_METHODS_STR);
 
-        let string = meta.path().ok()
-            .and_then(|p| p.get_ident().cloned())
-            .map(|ident| (ident.span(), ident.to_string()))
-            .or_else(|| match meta.lit() {
-                Ok(syn::Lit::Str(s)) => Some((s.span(), s.value())),
-                _ => None
-            });
+        if let MetaItem::Path(path) = meta {
+            if let Some(ident) = path.last_ident() {
+                let method = ident.to_string().parse()
+                    .map_err(|_| span.error("invalid HTTP method").help(&*help_text))?;
 
-        if let Some((span, string)) = string {
-            string.to_ascii_uppercase()
-                .parse()
-                .map(Method)
-                .map_err(|_| span.error("invalid or unknown HTTP method").help(help))
-        } else {
-            let err = format!("expected method ident or string, found {}", meta.description());
-            Err(span.error(err).help(help))
+                if !VALID_METHODS.contains(&method) {
+                    return Err(span.error("invalid HTTP method for route handlers")
+                               .help(&*help_text));
+                }
+
+                return Ok(Method(method));
+            }
         }
+
+        Err(span.error(format!("expected identifier, found {}", meta.description()))
+                .help(&*help_text))
     }
 }
 
 impl ToTokens for Method {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let variant = syn::Ident::new(self.0.variant_str(), Span::call_site());
-        tokens.extend(quote!(::rocket::http::Method::#variant));
+        let method_tokens = match self.0 {
+            http::Method::Get => quote!(::rocket::http::Method::Get),
+            http::Method::Put => quote!(::rocket::http::Method::Put),
+            http::Method::Post => quote!(::rocket::http::Method::Post),
+            http::Method::Delete => quote!(::rocket::http::Method::Delete),
+            http::Method::Options => quote!(::rocket::http::Method::Options),
+            http::Method::Head => quote!(::rocket::http::Method::Head),
+            http::Method::Trace => quote!(::rocket::http::Method::Trace),
+            http::Method::Connect => quote!(::rocket::http::Method::Connect),
+            http::Method::Patch => quote!(::rocket::http::Method::Patch),
+        };
+
+        tokens.extend(method_tokens);
     }
 }
 

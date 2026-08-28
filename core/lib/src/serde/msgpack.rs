@@ -9,7 +9,7 @@
 //!
 //! ```toml
 //! [dependencies.rocket]
-//! version = "0.6.0-dev"
+//! version = "0.5.1"
 //! features = ["msgpack"]
 //! ```
 //!
@@ -43,8 +43,9 @@ pub use rmp_serde::decode::Error;
 ///
 /// ## Sending MessagePack
 ///
-/// To respond with serialized MessagePack data, return either [`MsgPack<T>`] or
-/// [`Compact<T>`] from your handler. `T` must implement [`serde::Serialize`].
+/// To respond with serialized MessagePack data, return a `MsgPack<T>` type,
+/// where `T` implements [`Serialize`] from [`serde`]. The content type of the
+/// response is set to `application/msgpack` automatically.
 ///
 /// ```rust
 /// # #[macro_use] extern crate rocket;
@@ -58,10 +59,6 @@ pub use rmp_serde::decode::Error;
 ///     MsgPack(user_from_id)
 /// }
 /// ```
-///
-/// The differences between [`MsgPack<T>`] and [`Compact<T>`] are documented on
-/// [`Compact<T>`]. In most cases, [`MsgPack<T>`] is preferable, although compact
-/// was the default prior to Rocket version 0.6.
 ///
 /// ## Receiving MessagePack
 ///
@@ -126,35 +123,9 @@ pub use rmp_serde::decode::Error;
 /// msgpack = 5242880
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MsgPack<T, const COMPACT: bool = false>(pub T);
+pub struct MsgPack<T>(pub T);
 
-/// Serializes responses in a compact MesagePack format, where structs are
-/// serialized as arrays of their field values.
-///
-/// To respond with compact MessagePack data, return a `Compact<T>` type,
-/// where `T` implements [`Serialize`] from [`serde`]. The content type of the
-/// response is set to `application/msgpack` automatically.
-///
-/// ```rust
-/// # #[macro_use] extern crate rocket;
-/// # type User = usize;
-/// use rocket::serde::msgpack;
-///
-/// #[get("/users/<id>")]
-/// fn user(id: usize) -> msgpack::Compact<User> {
-///     let user_from_id = User::from(id);
-///     /* ... */
-///     msgpack::MsgPack(user_from_id)
-/// }
-/// ```
-///
-/// Prefer using [`MsgPack<T>`] for request guards, as the named/compact
-/// distinction is not relevant for request data - the correct option is
-/// implemented automatically. Using [`Compact<T>`] as a request guard will
-/// NOT prevent named requests from being accepted.
-pub type Compact<T> = MsgPack<T, true>;
-
-impl<T, const COMPACT: bool> MsgPack<T, COMPACT> {
+impl<T> MsgPack<T> {
     /// Consumes the `MsgPack` wrapper and returns the wrapped item.
     ///
     /// # Example
@@ -162,7 +133,7 @@ impl<T, const COMPACT: bool> MsgPack<T, COMPACT> {
     /// ```rust
     /// # use rocket::serde::msgpack::MsgPack;
     /// let string = "Hello".to_string();
-    /// let my_msgpack: MsgPack<_> = MsgPack(string);
+    /// let my_msgpack = MsgPack(string);
     /// assert_eq!(my_msgpack.into_inner(), "Hello".to_string());
     /// ```
     #[inline(always)]
@@ -215,16 +186,11 @@ impl<'r, T: Deserialize<'r>> FromData<'r> for MsgPack<T> {
 /// Serializes the wrapped value into MessagePack. Returns a response with
 /// Content-Type `MsgPack` and a fixed-size body with the serialization. If
 /// serialization fails, an `Err` of `Status::InternalServerError` is returned.
-impl<'r, T: Serialize, const COMPACT: bool> Responder<'r, 'static> for MsgPack<T, COMPACT> {
+impl<'r, T: Serialize> Responder<'r, 'static> for MsgPack<T> {
     fn respond_to(self, req: &'r Request<'_>) -> response::Result<'static> {
-        let maybe_buf = if COMPACT {
-            rmp_serde::to_vec(&self.0)
-        } else {
-            rmp_serde::to_vec_named(&self.0)
-        };
-        let buf = maybe_buf
+        let buf = rmp_serde::to_vec(&self.0)
             .map_err(|e| {
-                error!("MsgPack serialize failure: {}", e);
+                error_!("MsgPack failed to serialize: {:?}", e);
                 Status::InternalServerError
             })?;
 
@@ -256,13 +222,13 @@ impl<'v, T: Deserialize<'v> + Send> form::FromFormField<'v> for MsgPack<T> {
 //     }
 // }
 
-impl<T, const COMPACT: bool> From<T> for MsgPack<T, COMPACT> {
+impl<T> From<T> for MsgPack<T> {
     fn from(value: T) -> Self {
         MsgPack(value)
     }
 }
 
-impl<T, const COMPACT: bool> Deref for MsgPack<T, COMPACT> {
+impl<T> Deref for MsgPack<T> {
     type Target = T;
 
     #[inline(always)]
@@ -271,7 +237,7 @@ impl<T, const COMPACT: bool> Deref for MsgPack<T, COMPACT> {
     }
 }
 
-impl<T, const COMPACT: bool> DerefMut for MsgPack<T, COMPACT> {
+impl<T> DerefMut for MsgPack<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
@@ -321,8 +287,7 @@ pub fn from_slice<'a, T>(v: &'a [u8]) -> Result<T, Error>
 ///
 /// The compact representation represents structs as arrays.
 ///
-/// **_Always_ use [`Compact`] to serialize MessagePack response data in a
-/// compact format.**
+/// **_Always_ use [`MsgPack`] to serialize MessagePack response data.**
 ///
 /// # Example
 ///

@@ -1,26 +1,23 @@
-use std::{io, fmt};
+use std::fmt;
 use std::ops::RangeFrom;
-use std::sync::{Arc, atomic::Ordering};
-use std::borrow::Cow;
-use std::str::FromStr;
-use std::future::Future;
-use std::net::IpAddr;
+use std::{future::Future, borrow::Cow, sync::Arc};
+use std::net::{IpAddr, SocketAddr};
 
-use http::Version;
-use rocket_http::HttpVersion;
+use yansi::Paint;
 use state::{TypeMap, InitCell};
 use futures::future::BoxFuture;
-use ref_swap::OptionRefSwap;
+use atomic::{Atomic, Ordering};
 
 use crate::{Rocket, Route, Orbit};
-use crate::request::{FromParam, FromSegments, FromRequest, Outcome, AtomicMethod};
+use crate::request::{FromParam, FromSegments, FromRequest, Outcome};
 use crate::form::{self, ValueField, FromForm};
 use crate::data::Limits;
 
-use crate::http::ProxyProto;
-use crate::http::{Method, Header, HeaderMap, ContentType, Accept, MediaType, CookieJar, Cookie};
+use crate::http::{hyper, Method, Header, HeaderMap};
+use crate::http::{ContentType, Accept, MediaType, CookieJar, Cookie};
+use crate::http::uncased::UncasedStr;
+use crate::http::private::Certificates;
 use crate::http::uri::{fmt::Path, Origin, Segments, Host, Authority};
-use crate::listener::{Certificates, Endpoint};
 
 /// The type of an incoming web request.
 ///
@@ -28,44 +25,26 @@ use crate::listener::{Certificates, Endpoint};
 /// should likely only be used when writing [`FromRequest`] implementations. It
 /// contains all of the information for a given web request except for the body
 /// data. This includes the HTTP method, URI, cookies, headers, and more.
-#[derive(Clone)]
 pub struct Request<'r> {
-    method: AtomicMethod,
+    method: Atomic<Method>,
     uri: Origin<'r>,
     headers: HeaderMap<'r>,
-    pub(crate) version: Option<HttpVersion>,
-    pub(crate) errors: Vec<RequestError>,
     pub(crate) connection: ConnectionMeta,
     pub(crate) state: RequestState<'r>,
 }
 
 /// Information derived from an incoming connection, if any.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ConnectionMeta {
-    pub peer_endpoint: Option<Endpoint>,
+    pub remote: Option<SocketAddr>,
     #[cfg_attr(not(feature = "mtls"), allow(dead_code))]
-    pub peer_certs: Option<Arc<Certificates<'static>>>,
-    #[cfg_attr(feature = "tls", allow(dead_code))]
-    pub server_name: Option<String>,
-}
-
-impl ConnectionMeta {
-    pub fn new(
-        endpoint: io::Result<Endpoint>,
-        certs: Option<Certificates<'_>>,
-        server_name: Option<&str>) -> Self {
-        ConnectionMeta {
-            peer_endpoint: endpoint.ok(),
-            peer_certs: certs.map(|c| c.into_owned()).map(Arc::new),
-            server_name: server_name.map(|s| s.to_string()),
-        }
-    }
+    pub client_certificates: Option<Certificates>,
 }
 
 /// Information derived from the request.
 pub(crate) struct RequestState<'r> {
     pub rocket: &'r Rocket<Orbit>,
-    pub route: OptionRefSwap<'r, Route>,
+    pub route: Atomic<Option<&'r Route>>,
     pub cookies: CookieJar<'r>,
     pub accept: InitCell<Option<Accept>>,
     pub content_type: InitCell<Option<ContentType>>,
@@ -73,11 +52,23 @@ pub(crate) struct RequestState<'r> {
     pub host: Option<Host<'r>>,
 }
 
-impl Clone for RequestState<'_> {
+impl Request<'_> {
+    pub(crate) fn clone(&self) -> Self {
+        Request {
+            method: Atomic::new(self.method()),
+            uri: self.uri.clone(),
+            headers: self.headers.clone(),
+            connection: self.connection.clone(),
+            state: self.state.clone(),
+        }
+    }
+}
+
+impl RequestState<'_> {
     fn clone(&self) -> Self {
         RequestState {
             rocket: self.rocket,
-            route: OptionRefSwap::new(self.route.load(Ordering::Acquire)),
+            route: Atomic::new(self.route.load(Ordering::Acquire)),
             cookies: self.cookies.clone(),
             accept: self.accept.clone(),
             content_type: self.content_type.clone(),
@@ -93,42 +84,26 @@ impl<'r> Request<'r> {
     pub(crate) fn new<'s: 'r>(
         rocket: &'r Rocket<Orbit>,
         method: Method,
-        uri: Origin<'s>,
-        version: Option<HttpVersion>,
+        uri: Origin<'s>
     ) -> Request<'r> {
         Request {
             uri,
-            method: AtomicMethod::new(method),
+            method: Atomic::new(method),
             headers: HeaderMap::new(),
-            version,
-            errors: Vec::new(),
-            connection: ConnectionMeta::default(),
+            connection: ConnectionMeta {
+                remote: None,
+                client_certificates: None,
+            },
             state: RequestState {
                 rocket,
-                route: OptionRefSwap::new(None),
-                cookies: CookieJar::new(None, rocket),
+                route: Atomic::new(None),
+                cookies: CookieJar::new(rocket.config()),
                 accept: InitCell::new(),
                 content_type: InitCell::new(),
                 cache: Arc::new(<TypeMap![Send + Sync]>::new()),
                 host: None,
             }
         }
-    }
-
-    /// Retrieve http protocol version, when applicable.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rocket::http::HttpVersion;
-    ///
-    /// # let c = rocket::local::blocking::Client::debug_with(vec![]).unwrap();
-    /// # let mut req = c.get("/");
-    /// # req.override_version(HttpVersion::Http11);
-    /// assert_eq!(req.version(), Some(HttpVersion::Http11));
-    /// ```
-    pub fn version(&self) -> Option<HttpVersion> {
-        self.version
     }
 
     /// Retrieve the method from `self`.
@@ -146,7 +121,7 @@ impl<'r> Request<'r> {
     /// ```
     #[inline(always)]
     pub fn method(&self) -> Method {
-        self.method.load()
+        self.method.load(Ordering::Acquire)
     }
 
     /// Set the method of `self` to `method`.
@@ -166,7 +141,7 @@ impl<'r> Request<'r> {
     /// ```
     #[inline(always)]
     pub fn set_method(&mut self, method: Method) {
-        self.method.set(method);
+        self._set_method(method);
     }
 
     /// Borrow the [`Origin`] URI from `self`.
@@ -301,16 +276,6 @@ impl<'r> Request<'r> {
         self.state.host.as_ref()
     }
 
-    /// Returns the resolved SNI server name requested in the TLS handshake, if
-    /// any.
-    ///
-    /// Ideally, this will match the `Host` header in the request.
-    #[cfg(feature = "tls")]
-    #[inline(always)]
-    pub fn sni(&mut self) -> Option<&str> {
-        self.connection.server_name.as_deref()
-    }
-
     /// Sets the host of `self` to `host`.
     ///
     /// # Example
@@ -353,45 +318,43 @@ impl<'r> Request<'r> {
     /// # Example
     ///
     /// ```rust
-    /// use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    /// use rocket::listener::Endpoint;
+    /// use std::net::{SocketAddrV4, Ipv4Addr};
     /// # let c = rocket::local::blocking::Client::debug_with(vec![]).unwrap();
     /// # let mut req = c.get("/");
     /// # let request = req.inner_mut();
     ///
     /// assert_eq!(request.remote(), None);
     ///
-    /// let localhost = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8111);
-    /// request.set_remote(Endpoint::Tcp(localhost));
-    /// assert_eq!(request.remote().unwrap().tcp().unwrap(), localhost);
+    /// let localhost = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8000).into();
+    /// request.set_remote(localhost);
+    /// assert_eq!(request.remote(), Some(localhost));
     /// ```
     #[inline(always)]
-    pub fn remote(&self) -> Option<&Endpoint> {
-        self.connection.peer_endpoint.as_ref()
+    pub fn remote(&self) -> Option<SocketAddr> {
+        self.connection.remote
     }
 
     /// Sets the remote address of `self` to `address`.
     ///
     /// # Example
     ///
-    /// Set the remote address to be 127.0.0.1:8111:
+    /// Set the remote address to be 127.0.0.1:8000:
     ///
     /// ```rust
-    /// use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    /// use rocket::listener::Endpoint;
+    /// use std::net::{SocketAddrV4, Ipv4Addr};
     /// # let c = rocket::local::blocking::Client::debug_with(vec![]).unwrap();
     /// # let mut req = c.get("/");
     /// # let request = req.inner_mut();
     ///
     /// assert_eq!(request.remote(), None);
     ///
-    /// let localhost = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8111);
-    /// request.set_remote(Endpoint::Tcp(localhost));
-    /// assert_eq!(request.remote().unwrap().tcp().unwrap(), localhost);
+    /// let localhost = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8000).into();
+    /// request.set_remote(localhost);
+    /// assert_eq!(request.remote(), Some(localhost));
     /// ```
     #[inline(always)]
-    pub fn set_remote(&mut self, endpoint: Endpoint) {
-        self.connection.peer_endpoint = Some(endpoint);
+    pub fn set_remote(&mut self, address: SocketAddr) {
+        self.connection.remote = Some(address);
     }
 
     /// Returns the IP address of the configured
@@ -418,89 +381,9 @@ impl<'r> Request<'r> {
             .get_one(ip_header)
             .and_then(|ip| {
                 ip.parse()
-                    .map_err(|_| warn!(value = ip, "'{ip_header}' header is malformed"))
+                    .map_err(|_| warn_!("'{}' header is malformed: {}", ip_header, ip))
                     .ok()
             })
-    }
-
-    /// Returns the [`ProxyProto`] associated with the current request.
-    ///
-    /// The value is determined by inspecting the header named
-    /// [`proxy_proto_header`](crate::Config::proxy_proto_header), if
-    /// configured, and parsing it case-insensitivity. If the parameter isn't
-    /// configured or the request doesn't contain a header named as indicated,
-    /// this method returns `None`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rocket::http::{Header, ProxyProto};
-    ///
-    /// # let c = rocket::local::blocking::Client::debug_with(vec![]).unwrap();
-    /// # let req = c.get("/");
-    /// // By default, no `proxy_proto_header` is configured.
-    /// let req = req.header(Header::new("x-forwarded-proto", "https"));
-    /// assert_eq!(req.proxy_proto(), None);
-    ///
-    /// // We can configure one by setting the `proxy_proto_header` parameter.
-    /// // Here we set it to `x-forwarded-proto`, considered de-facto standard.
-    /// # let figment = rocket::figment::Figment::from(rocket::Config::debug_default());
-    /// let figment = figment.merge(("proxy_proto_header", "x-forwarded-proto"));
-    /// # let c = rocket::local::blocking::Client::debug(rocket::custom(figment)).unwrap();
-    /// # let req = c.get("/");
-    /// let req = req.header(Header::new("x-forwarded-proto", "https"));
-    /// assert_eq!(req.proxy_proto(), Some(ProxyProto::Https));
-    ///
-    /// # let req = c.get("/");
-    /// let req = req.header(Header::new("x-forwarded-proto", "HTTP"));
-    /// assert_eq!(req.proxy_proto(), Some(ProxyProto::Http));
-    ///
-    /// # let req = c.get("/");
-    /// let req = req.header(Header::new("x-forwarded-proto", "xproto"));
-    /// assert_eq!(req.proxy_proto(), Some(ProxyProto::Unknown("xproto".into())));
-    /// ```
-    pub fn proxy_proto(&self) -> Option<ProxyProto<'_>> {
-        self.rocket()
-            .config
-            .proxy_proto_header
-            .as_ref()
-            .and_then(|header| self.headers().get_one(header.as_str()))
-            .map(ProxyProto::from)
-    }
-
-    /// Returns whether we are *likely* in a secure context.
-    ///
-    /// A request is in a "secure context" if it was initially sent over a
-    /// secure (TLS, via HTTPS) connection. If TLS is configured and enabled,
-    /// then the request is guaranteed to be in a secure context. Otherwise, if
-    /// [`Request::proxy_proto()`] evaluates to `Https`, then we are _likely_ to
-    /// be in a secure context. We say _likely_ because it is entirely possible
-    /// for the header to indicate that the connection is being proxied via
-    /// HTTPS while reality differs. As such, this value should not be trusted
-    /// when 100% confidence is a necessity.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rocket::http::{Header, ProxyProto};
-    ///
-    /// # let client = rocket::local::blocking::Client::debug_with(vec![]).unwrap();
-    /// # let req = client.get("/");
-    /// // If TLS and proxy_proto are disabled, we are not in a secure context.
-    /// assert_eq!(req.context_is_likely_secure(), false);
-    ///
-    /// // Configuring proxy_proto and receiving a header value of `https` is
-    /// // interpreted as likely being in a secure context.
-    /// // Here we set it to `x-forwarded-proto`, considered de-facto standard.
-    /// # let figment = rocket::figment::Figment::from(rocket::Config::debug_default());
-    /// let figment = figment.merge(("proxy_proto_header", "x-forwarded-proto"));
-    /// # let c = rocket::local::blocking::Client::debug(rocket::custom(figment)).unwrap();
-    /// # let req = c.get("/");
-    /// let req = req.header(Header::new("x-forwarded-proto", "https"));
-    /// assert_eq!(req.context_is_likely_secure(), true);
-    /// ```
-    pub fn context_is_likely_secure(&self) -> bool {
-        self.cookies().state.secure
     }
 
     /// Attempts to return the client's IP address by first inspecting the
@@ -527,27 +410,25 @@ impl<'r> Request<'r> {
     ///
     /// ```rust
     /// # use rocket::http::Header;
+    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
     /// # let c = rocket::local::blocking::Client::debug_with(vec![]).unwrap();
     /// # let mut req = c.get("/");
     /// # let request = req.inner_mut();
-    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
-    /// # use rocket::listener::Endpoint;
     ///
     /// // starting without an "X-Real-IP" header or remote address
     /// assert!(request.client_ip().is_none());
     ///
     /// // add a remote address; this is done by Rocket automatically
-    /// let localhost_9190 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9190);
-    /// request.set_remote(Endpoint::Tcp(localhost_9190));
-    /// assert_eq!(request.client_ip().unwrap(), Ipv4Addr::LOCALHOST);
+    /// request.set_remote("127.0.0.1:8000".parse().unwrap());
+    /// assert_eq!(request.client_ip(), Some("127.0.0.1".parse().unwrap()));
     ///
     /// // now with an X-Real-IP header, the default value for `ip_header`.
     /// request.add_header(Header::new("X-Real-IP", "8.8.8.8"));
-    /// assert_eq!(request.client_ip().unwrap(), Ipv4Addr::new(8, 8, 8, 8));
+    /// assert_eq!(request.client_ip(), Some("8.8.8.8".parse().unwrap()));
     /// ```
     #[inline]
     pub fn client_ip(&self) -> Option<IpAddr> {
-        self.real_ip().or_else(|| self.remote()?.ip())
+        self.real_ip().or_else(|| self.remote().map(|r| r.ip()))
     }
 
     /// Returns a wrapped borrow to the cookies in `self`.
@@ -616,7 +497,7 @@ impl<'r> Request<'r> {
     #[inline]
     pub fn add_header<'h: 'r, H: Into<Header<'h>>>(&mut self, header: H) {
         let header = header.into();
-        self.bust_header_cache(&header, false);
+        self.bust_header_cache(header.name(), false);
         self.headers.add(header);
     }
 
@@ -645,7 +526,7 @@ impl<'r> Request<'r> {
     #[inline]
     pub fn replace_header<'h: 'r, H: Into<Header<'h>>>(&mut self, header: H) {
         let header = header.into();
-        self.bust_header_cache(&header, true);
+        self.bust_header_cache(header.name(), true);
         self.headers.replace(header);
     }
 
@@ -666,9 +547,9 @@ impl<'r> Request<'r> {
     /// ```
     #[inline]
     pub fn content_type(&self) -> Option<&ContentType> {
-        self.state.content_type
-            .get_or_init(|| self.headers().get_one("Content-Type").and_then(|v| v.parse().ok()))
-            .as_ref()
+        self.state.content_type.get_or_init(|| {
+            self.headers().get_one("Content-Type").and_then(|v| v.parse().ok())
+        }).as_ref()
     }
 
     /// Returns the Accept header of `self`. If the header is not present,
@@ -686,27 +567,17 @@ impl<'r> Request<'r> {
     /// ```
     #[inline]
     pub fn accept(&self) -> Option<&Accept> {
-        self.state.accept
-            .get_or_init(|| self.headers().get_one("Accept").and_then(|v| v.parse().ok()))
-            .as_ref()
+        self.state.accept.get_or_init(|| {
+            self.headers().get_one("Accept").and_then(|v| v.parse().ok())
+        }).as_ref()
     }
 
     /// Returns the media type "format" of the request.
     ///
-    /// The returned `MediaType` is derived from either the `Content-Type` or
-    /// the `Accept` header of the request, based on whether the request's
-    /// method allows a body (see [`Method::allows_request_body()`]). The table
-    /// below summarized this:
-    ///
-    /// | Method Allows Body | Returned Format                 |
-    /// |--------------------|---------------------------------|
-    /// | Always             | `Option<ContentType>`           |
-    /// | Maybe or Never     | `Some(Preferred Accept or Any)` |
-    ///
-    /// In short, if the request's method indicates support for a payload, the
-    /// request's `Content-Type` header value, if any, is returned. Otherwise
-    /// the [preferred](Accept::preferred()) `Accept` header value is returned,
-    /// or if none is present, [`Accept::Any`].
+    /// The "format" of a request is either the Content-Type, if the request
+    /// methods indicates support for a payload, or the preferred media type in
+    /// the Accept header otherwise. If the method indicates no payload and no
+    /// Accept header is specified, a media type of `Any` is returned.
     ///
     /// The media type returned from this method is used to match against the
     /// `format` route attribute.
@@ -738,10 +609,10 @@ impl<'r> Request<'r> {
     /// ```
     pub fn format(&self) -> Option<&MediaType> {
         static ANY: MediaType = MediaType::Any;
-        if self.method().allows_request_body().unwrap_or(false) {
+        if self.method().supports_payload() {
             self.content_type().map(|ct| ct.media_type())
         } else {
-            // TODO: Should we be using `accept_first` or `preferred`? Or
+            // FIXME: Should we be using `accept_first` or `preferred`? Or
             // should we be checking neither and instead pass things through
             // where the client accepts the thing at all?
             self.accept()
@@ -770,7 +641,7 @@ impl<'r> Request<'r> {
     /// ```
     #[inline(always)]
     pub fn rocket(&self) -> &'r Rocket<Orbit> {
-        self.state.rocket
+        &self.state.rocket
     }
 
     /// Returns the configured application data limits.
@@ -931,8 +802,6 @@ impl<'r> Request<'r> {
     /// ```rust
     /// # let c = rocket::local::blocking::Client::debug_with(vec![]).unwrap();
     /// # let get = |uri| c.get(uri);
-    /// use rocket::error::Empty;
-    ///
     /// assert_eq!(get("/a/b/c").param(0), Some(Ok("a")));
     /// assert_eq!(get("/a/b/c").param(1), Some(Ok("b")));
     /// assert_eq!(get("/a/b/c").param(2), Some(Ok("c")));
@@ -942,7 +811,7 @@ impl<'r> Request<'r> {
     /// assert!(get("/1/b/3").param::<usize>(1).unwrap().is_err());
     /// assert_eq!(get("/1/b/3").param(2), Some(Ok(3)));
     ///
-    /// assert_eq!(get("/").param::<&str>(0), Some(Err(Empty)));
+    /// assert_eq!(get("/").param::<&str>(0), None);
     /// ```
     #[inline]
     pub fn param<'a, T>(&'a self, n: usize) -> Option<Result<T, T::Error>>
@@ -1035,7 +904,7 @@ impl<'r> Request<'r> {
     pub fn query_value<'a, T>(&'a self, name: &str) -> Option<form::Result<'a, T>>
         where T: FromForm<'a>
     {
-        if !self.query_fields().any(|f| f.name == name) {
+        if self.query_fields().find(|f| f.name == name).is_none() {
             return None;
         }
 
@@ -1054,40 +923,34 @@ impl<'r> Request<'r> {
 #[doc(hidden)]
 impl<'r> Request<'r> {
     /// Resets the cached value (if any) for the header with name `name`.
-    fn bust_header_cache(&mut self, header: &Header<'_>, replace: bool) {
-        if header.name() == "Content-Type" {
+    fn bust_header_cache(&mut self, name: &UncasedStr, replace: bool) {
+        if name == "Content-Type" {
             if self.content_type().is_none() || replace {
                 self.state.content_type = InitCell::new();
             }
-        } else if header.name() == "Accept" {
+        } else if name == "Accept" {
             if self.accept().is_none() || replace {
                 self.state.accept = InitCell::new();
-            }
-        } else if Some(header.name()) == self.rocket().config.proxy_proto_header.as_deref() {
-            if !self.cookies().state.secure || replace {
-                self.cookies_mut().state.secure |= ProxyProto::from(header.value()).is_https();
             }
         }
     }
 
-    /// Get the `n`th non-empty path segment, 0-indexed, after the mount point
-    /// for the currently matched route, as a string, if it exists. Used by
-    /// codegen.
+    /// Get the `n`th path segment, 0-indexed, after the mount point for the
+    /// currently matched route, as a string, if it exists. Used by codegen.
     #[inline]
     pub fn routed_segment(&self, n: usize) -> Option<&str> {
         self.routed_segments(0..).get(n)
     }
 
-    /// Get the segments beginning at the `range`, 0-indexed, after the mount
+    /// Get the segments beginning at the `n`th, 0-indexed, after the mount
     /// point for the currently matched route, if they exist. Used by codegen.
     #[inline]
-    pub fn routed_segments(&self, range: RangeFrom<usize>) -> Segments<'_, Path> {
+    pub fn routed_segments(&self, n: RangeFrom<usize>) -> Segments<'_, Path> {
         let mount_segments = self.route()
-            .map(|r| r.uri.metadata.base_len)
+            .map(|r| r.uri.metadata.base_segs.len())
             .unwrap_or(0);
 
-        trace!(name: "segments", mount_segments, range.start);
-        self.uri().path().segments().skip(mount_segments + range.start)
+        self.uri().path().segments().skip(mount_segments + n.start)
     }
 
     // Retrieves the pre-parsed query items. Used by matching and codegen.
@@ -1106,9 +969,11 @@ impl<'r> Request<'r> {
         self.state.route.store(Some(route), Ordering::Release)
     }
 
+    /// Set the method of `self`, even when `self` is a shared reference. Used
+    /// during routing to override methods for re-routing.
     #[inline(always)]
     pub(crate) fn _set_method(&self, method: Method) {
-        self.method.store(method)
+        self.method.store(method, Ordering::Release)
     }
 
     pub(crate) fn cookies_mut(&mut self) -> &mut CookieJar<'r> {
@@ -1118,28 +983,18 @@ impl<'r> Request<'r> {
     /// Convert from Hyper types into a Rocket Request.
     pub(crate) fn from_hyp(
         rocket: &'r Rocket<Orbit>,
-        hyper: &'r hyper::http::request::Parts,
-        connection: ConnectionMeta,
-    ) -> Result<Request<'r>, Request<'r>> {
+        hyper: &'r hyper::request::Parts,
+        connection: Option<ConnectionMeta>,
+    ) -> Result<Request<'r>, BadRequest<'r>> {
         // Keep track of parsing errors; emit a `BadRequest` if any exist.
         let mut errors = vec![];
 
-        // Ensure that the method is known.
-        let method = match hyper.method {
-            hyper::Method::GET => Method::Get,
-            hyper::Method::PUT => Method::Put,
-            hyper::Method::POST => Method::Post,
-            hyper::Method::DELETE => Method::Delete,
-            hyper::Method::OPTIONS => Method::Options,
-            hyper::Method::HEAD => Method::Head,
-            hyper::Method::TRACE => Method::Trace,
-            hyper::Method::CONNECT => Method::Connect,
-            hyper::Method::PATCH => Method::Patch,
-            ref ext => Method::from_str(ext.as_str()).unwrap_or_else(|_| {
-                errors.push(RequestError::BadMethod(hyper.method.clone()));
+        // Ensure that the method is known. TODO: Allow made-up methods?
+        let method = Method::from_hyp(&hyper.method)
+            .unwrap_or_else(|| {
+                errors.push(Kind::BadMethod(&hyper.method));
                 Method::Get
-            }),
-        };
+            });
 
         // TODO: Keep around not just the path/query, but the rest, if there?
         let uri = hyper.uri.path_and_query()
@@ -1149,40 +1004,29 @@ impl<'r> Request<'r> {
                 // a security issue with Hyper, there isn't much we can do.
                 #[cfg(debug_assertions)]
                 if Origin::parse(uri.as_str()).is_err() {
-                    warn!(
-                        name: "uri_discord",
-                        %uri,
-                        "Hyper/Rocket URI validity discord: {uri}\n\
-                        Hyper believes the URI is valid while Rocket disagrees.\n\
-                        This is likely a Hyper bug with potential security implications.\n\
-                        Please report this warning to Rocket's GitHub issue tracker."
-                    )
+                    warn!("Hyper/Rocket URI validity discord: {:?}", uri.as_str());
+                    info_!("Hyper believes the URI is valid while Rocket disagrees.");
+                    info_!("This is likely a Hyper bug with potential security implications.");
+                    warn_!("Please report this warning to Rocket's GitHub issue tracker.");
                 }
 
                 Origin::new(uri.path(), uri.query().map(Cow::Borrowed))
             })
             .unwrap_or_else(|| {
-                errors.push(RequestError::InvalidUri(hyper.uri.clone()));
-                Origin::root().clone()
+                errors.push(Kind::InvalidUri(&hyper.uri));
+                Origin::ROOT
             });
 
         // Construct the request object; fill in metadata and headers next.
-        let mut request = Request::new(rocket, method, uri, match hyper.version {
-            Version::HTTP_09 => Some(HttpVersion::Http09),
-            Version::HTTP_10 => Some(HttpVersion::Http10),
-            Version::HTTP_11 => Some(HttpVersion::Http11),
-            Version::HTTP_2 => Some(HttpVersion::Http2),
-            Version::HTTP_3 => Some(HttpVersion::Http3),
-            _ => None,
-        });
-        request.errors = errors;
+        let mut request = Request::new(rocket, method, uri);
 
         // Set the passed in connection metadata.
-        request.connection = connection;
+        if let Some(connection) = connection {
+            request.connection = connection;
+        }
 
         // Determine + set host. On HTTP < 2, use the `HOST` header. Otherwise,
         // use the `:authority` pseudo-header which hyper makes part of the URI.
-        // TODO: Use an `InitCell` to compute this later.
         request.state.host = if hyper.version < hyper::Version::HTTP_2 {
             hyper.headers.get("host").and_then(|h| Host::parse_bytes(h.as_bytes()).ok())
         } else {
@@ -1191,8 +1035,9 @@ impl<'r> Request<'r> {
 
         // Set the request cookies, if they exist.
         for header in hyper.headers.get_all("Cookie") {
-            let Ok(raw_str) = std::str::from_utf8(header.as_bytes()) else {
-                continue
+            let raw_str = match std::str::from_utf8(header.as_bytes()) {
+                Ok(string) => string,
+                Err(_) => continue
             };
 
             for cookie_str in raw_str.split(';').map(|s| s.trim()) {
@@ -1203,34 +1048,45 @@ impl<'r> Request<'r> {
         }
 
         // Set the rest of the headers. This is rather unfortunate and slow.
-        for (header, value) in hyper.headers.iter() {
+        for (name, value) in hyper.headers.iter() {
             // FIXME: This is rather unfortunate. Header values needn't be UTF8.
-            let Ok(value) = std::str::from_utf8(value.as_bytes()) else {
-                warn!(%header, "dropping header with invalid UTF-8");
-                continue;
+            let value = match std::str::from_utf8(value.as_bytes()) {
+                Ok(value) => value,
+                Err(_) => {
+                    warn!("Header '{}' contains invalid UTF-8", name);
+                    warn_!("Rocket only supports UTF-8 header values. Dropping header.");
+                    continue;
+                }
             };
 
-            request.add_header(Header::new(header.as_str(), value));
+            request.add_header(Header::new(name.as_str(), value));
         }
 
-        match request.errors.is_empty() {
-            true => Ok(request),
-            false => Err(request),
+        if errors.is_empty() {
+            Ok(request)
+        } else {
+            Err(BadRequest { request, errors })
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum RequestError {
-    InvalidUri(hyper::Uri),
-    BadMethod(hyper::Method),
+#[derive(Debug)]
+pub(crate) struct BadRequest<'r> {
+    pub request: Request<'r>,
+    pub errors: Vec<Kind<'r>>,
 }
 
-impl fmt::Display for RequestError {
+#[derive(Debug)]
+pub(crate) enum Kind<'r> {
+    InvalidUri(&'r hyper::Uri),
+    BadMethod(&'r hyper::Method),
+}
+
+impl fmt::Display for Kind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RequestError::InvalidUri(u) => write!(f, "invalid origin URI: {}", u),
-            RequestError::BadMethod(m) => write!(f, "invalid or unrecognized method: {}", m),
+            Kind::InvalidUri(u) => write!(f, "invalid origin URI: {}", u),
+            Kind::BadMethod(m) => write!(f, "invalid or unrecognized method: {}", m),
         }
     }
 }
@@ -1238,11 +1094,27 @@ impl fmt::Display for RequestError {
 impl fmt::Debug for Request<'_> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Request")
-            .field("method", &self.method())
-            .field("uri", &self.uri())
+            .field("method", &self.method)
+            .field("uri", &self.uri)
             .field("headers", &self.headers())
             .field("remote", &self.remote())
             .field("cookies", &self.cookies())
             .finish()
+    }
+}
+
+impl fmt::Display for Request<'_> {
+    /// Pretty prints a Request. Primarily used by Rocket's logging.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.method().green(), self.uri.blue())?;
+
+        // Print the requests media type when the route specifies a format.
+        if let Some(mime) = self.format() {
+            if !mime.is_any() {
+                write!(f, " {}/{}", mime.top().yellow().linger(), mime.sub().resetting())?;
+            }
+        }
+
+        Ok(())
     }
 }

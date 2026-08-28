@@ -356,27 +356,6 @@ impl<'v> TempFile<'v> {
         }
     }
 
-    /// Returns whether the file is empty.
-    ///
-    /// This is equivalent to `file.len() == 0`.
-    ///
-    /// This method does not perform any system calls.
-    ///
-    /// ```rust
-    /// # #[macro_use] extern crate rocket;
-    /// use rocket::fs::TempFile;
-    ///
-    /// #[post("/", data = "<file>")]
-    /// fn handler(file: TempFile<'_>) {
-    ///     if file.is_empty() {
-    ///         assert_eq!(file.len(), 0);
-    ///     }
-    /// }
-    /// ```
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Returns the size, in bytes, of the file.
     ///
     /// This method does not perform any system calls.
@@ -511,7 +490,7 @@ impl<'v> TempFile<'v> {
     ) -> io::Result<Capped<TempFile<'a>>> {
         let limit = content_type.as_ref()
             .and_then(|ct| ct.extension())
-            .and_then(|ext| req.limits().find(["file", ext.as_str()]))
+            .and_then(|ext| req.limits().find(&["file", ext.as_str()]))
             .or_else(|| req.limits().get("file"))
             .unwrap_or(Limits::FILE);
 
@@ -554,16 +533,17 @@ impl<'r> FromData<'r> for Capped<TempFile<'_>> {
     type Error = io::Error;
 
     async fn from_data(req: &'r Request<'_>, data: Data<'r>) -> data::Outcome<'r, Self> {
+        use yansi::Paint;
+
         let has_form = |ty: &ContentType| ty.is_form_data() || ty.is_form();
         if req.content_type().map_or(false, has_form) {
-            warn!(request.content_type = req.content_type().map(display),
-                "Request contains a form that is not being processed.\n\
-                Bare `TempFile` data guard writes raw, unprocessed streams to disk\n\
-                Perhaps you meant to use `Form<TempFile<'_>>` instead?");
+            let (tf, form) = ("TempFile<'_>".primary(), "Form<TempFile<'_>>".primary());
+            warn_!("Request contains a form that will not be processed.");
+            info_!("Bare `{}` data guard writes raw, unprocessed streams to disk.", tf);
+            info_!("Did you mean to use `{}` instead?", form);
         }
 
-        TempFile::from(req, data, None, req.content_type().cloned())
-            .await
+        TempFile::from(req, data, None, req.content_type().cloned()).await
             .or_error(Status::BadRequest)
     }
 }
